@@ -33,7 +33,7 @@ export function LoginScreen({ onSuccess }: Props) {
         <input
           className="login-input"
           type="text"
-          placeholder="Username"         {/* ← was "Email" */}
+          placeholder="Username"       
           value={username}
           onChange={e => setUsername(e.target.value)}
           autoComplete="username"
