@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getTracks, searchTracks } from './api/tracks';
+import { getTracks, searchTracks, getToken, clearToken, BASE_URL } from './api/tracks';
 import { SearchBar } from './components/SearchBar';
 import { TrackItem } from './components/TrackItem';
 import { MiniPlayer } from './components/MiniPlayer';
 import { usePlayer } from './hooks/usePlayer';
 import { useTelegram } from './hooks/useTelegram';
 import { LoginScreen } from './components/LoginScreen';
-import { getToken, clearToken } from './api/tracks';
 import type { Track } from './types/track';
 import './styles/global.css';
 
@@ -15,12 +14,12 @@ export default function App() {
   const player = usePlayer();
 
   const [authed, setAuthed] = useState(() => !!getToken());
-
   const [tracks, setTracks] = useState<Track[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const listRef = useRef<HTMLDivElement>(null);
 
   // Apply Telegram theme as CSS variables
   useEffect(() => {
@@ -33,28 +32,32 @@ export default function App() {
     root.style.setProperty('--accent-text', theme.buttonTextColor);
   }, [theme]);
 
-  if (!authed) {
-  return <LoginScreen onSuccess={() => setAuthed(true)} />;}
-
-  // Initial load
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const data = await getTracks();
       setTracks(data);
-    } catch (e:any) { if (e.message === 'UNAUTHORIZED') {
-    setAuthed(false);  // kicks back to login screen
-    return;
-  }
+    } catch (e: any) {
+      if (e.message === 'UNAUTHORIZED') {
+        setAuthed(false);
+        return;
+      }
+      setError('Could not load tracks.');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Load tracks whenever authed becomes true
+  useEffect(() => {
+    if (authed) load();
+  }, [authed, load]);
 
-  // Search with debounce (handled inside SearchBar)
+  const handleLoginSuccess = useCallback(() => {
+    setAuthed(true);
+  }, []);
+
   const handleSearch = useCallback(async (q: string) => {
     setQuery(q);
     setSearching(true);
@@ -62,37 +65,52 @@ export default function App() {
       const data = await searchTracks(q);
       setTracks(data);
     } catch {
-      // silently keep existing list on search error
+      // keep existing list
     } finally {
       setSearching(false);
     }
   }, []);
 
-  const handlePlay = useCallback(
-    (track: Track) => {
-      haptic.tap();
-      player.play(track);
-    },
-    [player, haptic],
-  );
+  const handlePlay = useCallback((track: Track) => {
+    haptic.tap();
+    player.play(track);
+  }, [player, haptic]);
 
   const handlePlayPause = useCallback(() => {
     if (!player.currentTrack) return;
     player.play(player.currentTrack);
   }, [player]);
 
-  // Staggered animation delay for list items
-  const listRef = useRef<HTMLDivElement>(null);
+  // ── Auth gate — AFTER all hooks ──────────────────────────
+  if (!authed) {
+    return <LoginScreen onSuccess={handleLoginSuccess} />;
+  }
+
+  const handleLogout = useCallback(async () => {
+  haptic.tap();
+  await fetch(`${BASE_URL}/users/logout`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getToken()}` },
+  }).catch(() => {}); // fire and forget
+  clearToken();
+  setAuthed(false);
+  setTracks([]);
+}, [haptic]);
 
   return (
     <div className="app">
-      {/* ── Header ── */}
       <div className="header">
         <h1>Music <span>♪</span></h1>
+        <button className="logout-btn" onClick={handleLogout} aria-label="Logout">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16,17 21,12 16,7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+        </button>
         <SearchBar onSearch={handleSearch} loading={searching} />
       </div>
 
-      {/* ── Track list ── */}
       <div className="track-list-container" ref={listRef}>
         {loading ? (
           <div className="state-msg">
@@ -111,7 +129,7 @@ export default function App() {
             <span>{query ? `No results for "${query}"` : 'No tracks found'}</span>
           </div>
         ) : (
-          tracks.map((track, i) => (
+          tracks.map((track) => (
             <TrackItem
               key={track.id}
               track={track}
@@ -123,7 +141,6 @@ export default function App() {
         )}
       </div>
 
-      {/* ── Sticky player ── */}
       {player.currentTrack && (
         <MiniPlayer
           track={player.currentTrack}
