@@ -5,12 +5,16 @@ import { TrackItem } from './components/TrackItem';
 import { MiniPlayer } from './components/MiniPlayer';
 import { usePlayer } from './hooks/usePlayer';
 import { useTelegram } from './hooks/useTelegram';
+import { LoginScreen } from './components/LoginScreen';
+import { getToken, clearToken } from './api/tracks';
 import type { Track } from './types/track';
 import './styles/global.css';
 
 export default function App() {
   const { theme, haptic } = useTelegram();
   const player = usePlayer();
+
+  const [authed, setAuthed] = useState(() => !!getToken());
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,6 +33,9 @@ export default function App() {
     root.style.setProperty('--accent-text', theme.buttonTextColor);
   }, [theme]);
 
+  if (!authed) {
+  return <LoginScreen onSuccess={() => setAuthed(true)} />;}
+
   // Initial load
   const load = useCallback(async () => {
     setLoading(true);
@@ -36,8 +43,10 @@ export default function App() {
     try {
       const data = await getTracks();
       setTracks(data);
-    } catch (e) {
-      setError('Could not load tracks. Check your connection.');
+    } catch (e:any) { if (e.message === 'UNAUTHORIZED') {
+    setAuthed(false);  // kicks back to login screen
+    return;
+  }
     } finally {
       setLoading(false);
     }

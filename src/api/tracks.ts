@@ -1,22 +1,41 @@
-import type { Track } from '../types/track';
-
-// ─── Base URL ────────────────────────────────────────────────────────────────
-// Override via VITE_API_BASE_URL in .env (e.g. when running locally against
-// a different host). Production default points at the Render deployment.
 export const BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'https://music-streaming-server-lfon.onrender.com';
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`);
+// ── Token storage ─────────────────────────────────────────
+const TOKEN_KEY = 'tg_music_token';
+export const getToken = () => localStorage.getItem(TOKEN_KEY);
+export const setToken = (t: string) => localStorage.setItem(TOKEN_KEY, t);
+export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
+
+// ── Auth ──────────────────────────────────────────────────
+export async function login(email: string, password: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
   if (!res.ok) {
-    throw new Error(`API error ${res.status}: ${res.statusText}`);
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? 'Login failed');
   }
-  return res.json() as Promise<T>;
+  const { token } = await res.json();
+  setToken(token);
 }
 
-// ─── Raw shape the server returns ─────────────────────────────────────────────
-// Adjust these field names to match your actual Prisma model / controller output
+// ── Authenticated fetch ───────────────────────────────────
+async function authGet<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error('UNAUTHORIZED');
+  }
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
+}
+
+// ── Tracks ────────────────────────────────────────────────
 interface RawTrack {
   id: number | string;
   title: string;
@@ -24,46 +43,33 @@ interface RawTrack {
   duration?: number;
   coverUrl?: string;
   imageUrl?: string;
-  filePath?: string;
   streamUrl?: string;
   album?: string;
-  genre?: string;
 }
 
-function normalise(raw: RawTrack): Track {
+function normalise(raw: RawTrack) {
   return {
     id: raw.id,
-    title: raw.title ?? 'Unknown Title',
-    artist: raw.artist ?? 'Unknown Artist',
+    title: raw.title ?? 'Unknown',
+    artist: raw.artist ?? 'Unknown',
     duration: raw.duration,
     album: raw.album,
-    genre: raw.genre,
-    // Cover — try both common field names
     coverUrl: raw.coverUrl ?? raw.imageUrl,
-    // Stream URL — prefer server-provided field, fall back to constructing from id
     streamUrl: raw.streamUrl ?? `${BASE_URL}/tracks/${raw.id}`,
   };
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
-
-/** Fetch full track list */
-export async function getTracks(): Promise<Track[]> {
-  const data = await get<RawTrack[] | { tracks: RawTrack[] }>('/tracks');
+export async function getTracks() {
+  const data = await authGet<RawTrack[] | { tracks: RawTrack[] }>('/tracks');
   const list = Array.isArray(data) ? data : data.tracks ?? [];
   return list.map(normalise);
 }
 
-/** Search tracks by query string */
-export async function searchTracks(query: string): Promise<Track[]> {
+export async function searchTracks(query: string) {
   if (!query.trim()) return getTracks();
-  const encoded = encodeURIComponent(query.trim());
-  const data = await get<RawTrack[] | { tracks: RawTrack[] }>(`/search?query=${encoded}`);
+  const data = await authGet<RawTrack[] | { tracks: RawTrack[] }>(
+    `/search?query=${encodeURIComponent(query.trim())}`
+  );
   const list = Array.isArray(data) ? data : data.tracks ?? [];
   return list.map(normalise);
-}
-
-/** Build a streaming URL for a given track id */
-export function streamUrl(id: number | string): string {
-  return `${BASE_URL}/tracks/${id}`;
 }

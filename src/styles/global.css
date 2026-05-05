@@ -66,6 +66,82 @@ html, body, #root {
   -webkit-overflow-scrolling: touch;
 }
 
+/* ── Login screen ─────────────────────────────────────────── */
+.login-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 24px;
+  background: var(--bg);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.login-icon {
+  font-size: 48px;
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+.login-card h2 {
+  font-size: 26px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.login-sub {
+  font-size: 14px;
+  color: var(--hint);
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.login-input {
+  width: 100%;
+  height: 48px;
+  padding: 0 16px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  font-size: 15px;
+  font-family: inherit;
+  outline: none;
+}
+.login-input:focus { border-color: var(--accent); }
+
+.login-error {
+  font-size: 13px;
+  color: #ff6b6b;
+  text-align: center;
+}
+
+.login-btn {
+  height: 50px;
+  background: var(--accent);
+  color: var(--accent-text);
+  border: none;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 4px;
+  transition: opacity .15s;
+}
+.login-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.login-btn:active:not(:disabled) { opacity: 0.8; }
+
 /* Custom scrollbar */
 .track-list-container::-webkit-scrollbar { width: 2px; }
 .track-list-container::-webkit-scrollbar-track { background: transparent; }
