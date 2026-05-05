@@ -1,22 +1,20 @@
 import { useState } from 'react';
 import { login } from '../api/tracks';
 
-interface Props {
-  onSuccess: () => void;
-}
+interface Props { onSuccess: () => void; }
 
 export function LoginScreen({ onSuccess }: Props) {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
-    if (!email || !password) return;
+    if (!username || !password) return;
     setLoading(true);
     setError('');
     try {
-      await login(email, password);
+      await login(username, password);
       onSuccess();
     } catch (e: any) {
       setError(e.message ?? 'Login failed');
@@ -30,15 +28,16 @@ export function LoginScreen({ onSuccess }: Props) {
       <div className="login-card">
         <div className="login-icon">♪</div>
         <h2>Sign in</h2>
-        <p className="login-sub">Enter your account credentials</p>
+        <p className="login-sub">Enter your credentials</p>
 
         <input
           className="login-input"
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={e => setEmail(e.target.value)}
-          autoComplete="email"
+          type="text"
+          placeholder="Username"         {/* ← was "Email" */}
+          value={username}
+          onChange={e => setUsername(e.target.value)}
+          autoComplete="username"
+          autoCapitalize="none"
         />
         <input
           className="login-input"
@@ -55,7 +54,7 @@ export function LoginScreen({ onSuccess }: Props) {
         <button
           className="login-btn"
           onClick={handleSubmit}
-          disabled={loading || !email || !password}
+          disabled={loading || !username || !password}
         >
           {loading ? <span className="btn-spinner" /> : 'Sign in'}
         </button>

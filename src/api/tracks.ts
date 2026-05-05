@@ -1,18 +1,18 @@
 export const BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? 'https://music-streaming-server-lfon.onrender.com';
 
-// ── Token storage ─────────────────────────────────────────
+// ── Token ─────────────────────────────────────────────────
 const TOKEN_KEY = 'tg_music_token';
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t: string) => localStorage.setItem(TOKEN_KEY, t);
 export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
 
-// ── Auth ──────────────────────────────────────────────────
-export async function login(email: string, password: string): Promise<void> {
-  const res = await fetch(`${BASE_URL}/auth/login`, {
+// ── Auth — NOTE: server uses "username", not "email" ──────
+export async function login(username: string, password: string): Promise<void> {
+  const res = await fetch(`${BASE_URL}/users/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ username, password }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -22,29 +22,22 @@ export async function login(email: string, password: string): Promise<void> {
   setToken(token);
 }
 
-// ── Authenticated fetch ───────────────────────────────────
-async function authGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { Authorization: `Bearer ${getToken()}` },
-  });
-  if (res.status === 401) {
-    clearToken();
-    throw new Error('UNAUTHORIZED');
-  }
+// ── Fetch (tracks are public — no auth needed) ────────────
+async function get<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`);
   if (!res.ok) throw new Error(`API error ${res.status}`);
   return res.json();
 }
 
-// ── Tracks ────────────────────────────────────────────────
+// ── Raw shape from your trackController ───────────────────
 interface RawTrack {
-  id: number | string;
+  id: number;
   title: string;
   artist: string;
-  duration?: number;
-  coverUrl?: string;
-  imageUrl?: string;
-  streamUrl?: string;
+  imageUrl?: string | null;
+  filename: string;
   album?: string;
+  genre?: string;
 }
 
 function normalise(raw: RawTrack) {
@@ -52,24 +45,20 @@ function normalise(raw: RawTrack) {
     id: raw.id,
     title: raw.title ?? 'Unknown',
     artist: raw.artist ?? 'Unknown',
-    duration: raw.duration,
     album: raw.album,
-    coverUrl: raw.coverUrl ?? raw.imageUrl,
-    streamUrl: raw.streamUrl ?? `${BASE_URL}/tracks/${raw.id}`,
+    genre: raw.genre,
+    coverUrl: raw.imageUrl ?? undefined,           // already full URL from server
+    streamUrl: `${BASE_URL}/tracks/${raw.id}/stream`,  // ← correct endpoint
   };
 }
 
 export async function getTracks() {
-  const data = await authGet<RawTrack[] | { tracks: RawTrack[] }>('/tracks');
-  const list = Array.isArray(data) ? data : data.tracks ?? [];
-  return list.map(normalise);
+  const data = await get<RawTrack[]>('/tracks');
+  return data.map(normalise);
 }
 
 export async function searchTracks(query: string) {
   if (!query.trim()) return getTracks();
-  const data = await authGet<RawTrack[] | { tracks: RawTrack[] }>(
-    `/search?query=${encodeURIComponent(query.trim())}`
-  );
-  const list = Array.isArray(data) ? data : data.tracks ?? [];
-  return list.map(normalise);
+  const data = await get<RawTrack[]>(`/tracks/search?query=${encodeURIComponent(query.trim())}`);
+  return data.map(normalise);
 }
