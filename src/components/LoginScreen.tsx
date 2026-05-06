@@ -1,13 +1,24 @@
 import { useState } from 'react';
 import { login } from '../api/tracks';
+import { RegisterScreen } from './RegisterScreen';
 
 interface Props { onSuccess: () => void; }
 
 export function LoginScreen({ onSuccess }: Props) {
+  const [showRegister, setShowRegister] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  if (showRegister) {
+    return (
+      <RegisterScreen
+        onSuccess={onSuccess}
+        onBack={() => setShowRegister(false)}
+      />
+    );
+  }
 
   const handleSubmit = async () => {
     if (!username || !password) return;
@@ -33,7 +44,7 @@ export function LoginScreen({ onSuccess }: Props) {
         <input
           className="login-input"
           type="text"
-          placeholder="Username"       
+          placeholder="Username"
           value={username}
           onChange={e => setUsername(e.target.value)}
           autoComplete="username"
@@ -57,6 +68,10 @@ export function LoginScreen({ onSuccess }: Props) {
           disabled={loading || !username || !password}
         >
           {loading ? <span className="btn-spinner" /> : 'Sign in'}
+        </button>
+
+        <button className="auth-switch-btn" onClick={() => setShowRegister(true)}>
+          No account? <span>Create one</span>
         </button>
       </div>
     </div>
