@@ -10,7 +10,6 @@ export function usePlayer() {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(1);
 
-  // Create audio element once
   useEffect(() => {
     const audio = new Audio();
     audio.preload = 'metadata';
@@ -22,11 +21,22 @@ export function usePlayer() {
     const onError = () => setStatus('error');
     const onWaiting = () => setStatus('loading');
     const onCanPlay = () => {
-      // Only flip to playing if we were loading
       setStatus(s => (s === 'loading' ? 'playing' : s));
     };
     const onTimeUpdate = () => {
-      if (audio.duration) setProgress(audio.currentTime / audio.duration);
+      if (!audio.duration) return;
+      setProgress(audio.currentTime / audio.duration);
+
+      // Keep iOS lock screen seekbar in sync
+      if ('mediaSession' in navigator && isFinite(audio.duration)) {
+        try {
+          navigator.mediaSession.setPositionState({
+            duration: audio.duration,
+            playbackRate: audio.playbackRate,
+            position: audio.currentTime,
+          });
+        } catch {}
+      }
     };
     const onDurationChange = () => setDuration(audio.duration || 0);
 
@@ -57,7 +67,7 @@ export function usePlayer() {
     if (!audio) return;
 
     if (currentTrack?.id === track.id) {
-      // Toggle play/pause
+      // Toggle play/pause on same track
       if (audio.paused) {
         audio.play().catch(() => setStatus('error'));
       } else {
@@ -73,29 +83,51 @@ export function usePlayer() {
     setProgress(0);
     setDuration(0);
     audio.src = track.streamUrl;
-    if ('mediaSession' in navigator) {
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: track.title,
-      artist: track.artist,
-      album: track.album ?? '',
-      artwork: track.coverUrl
-        ? [
-            { src: track.coverUrl, sizes: '512x512', type: 'image/jpeg' },
-          ]
-        : [],
-    });
 
-    navigator.mediaSession.setActionHandler('play', () => {
-      audio.play().catch(() => {});
-    });
-    navigator.mediaSession.setActionHandler('pause', () => {
-      audio.pause();
-    });
-    navigator.mediaSession.setActionHandler('stop', () => {
-      audio.pause();
-      audio.currentTime = 0;
-    });
-  }
+    // Media Session — iOS lock screen / notification controls
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: track.title,
+        artist: track.artist,
+        album: track.album ?? '',
+        artwork: track.coverUrl
+          ? [{ src: track.coverUrl, sizes: '512x512', type: 'image/jpeg' }]
+          : [],
+      });
+
+      navigator.mediaSession.setActionHandler('play', () => {
+        audio.play().catch(() => {});
+      });
+      navigator.mediaSession.setActionHandler('pause', () => {
+        audio.pause();
+      });
+      navigator.mediaSession.setActionHandler('stop', () => {
+        audio.pause();
+        audio.currentTime = 0;
+      });
+
+      // Seekbar drag in iOS notification
+      navigator.mediaSession.setActionHandler('seekto', (details) => {
+        if (details.seekTime !== undefined) {
+          audio.currentTime = details.seekTime;
+          if (audio.duration) setProgress(audio.currentTime / audio.duration);
+        }
+      });
+
+      // Skip forward/back buttons in notification
+      navigator.mediaSession.setActionHandler('seekforward', (details) => {
+        audio.currentTime = Math.min(
+          audio.duration || 0,
+          audio.currentTime + (details.seekOffset ?? 10),
+        );
+      });
+      navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+        audio.currentTime = Math.max(
+          0,
+          audio.currentTime - (details.seekOffset ?? 10),
+        );
+      });
+    }
 
     audio.load();
     audio.play().catch(() => setStatus('error'));

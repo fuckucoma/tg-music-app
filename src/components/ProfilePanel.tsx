@@ -15,6 +15,11 @@ interface Props {
   onAvatarChange?: (url: string) => void;
 }
 
+// Force https — Render returns http:// URLs but the app is on https://
+function toHttps(url: string): string {
+  return url.replace(/^http:\/\//, 'https://');
+}
+
 export function ProfilePanel({ open, onClose, onLogout, onAvatarChange }: Props) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(false);
@@ -31,7 +36,10 @@ export function ProfilePanel({ open, onClose, onLogout, onAvatarChange }: Props)
       .then(r => r.json())
       .then(data => {
         setProfile(data);
-        setAvatarUrl(data.profileImageUrl ?? null);
+        // Fix mixed content + sync header avatar
+        const safe = data.profileImageUrl ? toHttps(data.profileImageUrl) : null;
+        setAvatarUrl(safe);
+        if (safe) onAvatarChange?.(safe);
       })
       .catch(() => setProfile(null))
       .finally(() => setLoading(false));
@@ -51,8 +59,9 @@ export function ProfilePanel({ open, onClose, onLogout, onAvatarChange }: Props)
       });
       const data = await res.json();
       if (res.ok) {
-        setAvatarUrl(data.profileImageUrl);
-        onAvatarChange?.(data.profileImageUrl);
+        const safe = toHttps(data.profileImageUrl);
+        setAvatarUrl(safe);
+        onAvatarChange?.(safe);  // updates header button + localStorage
       }
     } catch {}
     finally { setUploading(false); }
@@ -73,7 +82,6 @@ export function ProfilePanel({ open, onClose, onLogout, onAvatarChange }: Props)
       <div className={`panel-backdrop ${open ? 'visible' : ''}`} onClick={onClose} />
 
       <div className={`profile-panel ${open ? 'open' : ''}`}>
-        {/* Drag handle */}
         <div className="panel-handle" onClick={onClose} />
 
         {loading ? (
@@ -117,7 +125,7 @@ export function ProfilePanel({ open, onClose, onLogout, onAvatarChange }: Props)
             <div className="profile-name">{profile.username}</div>
             {joined && <div className="profile-joined">Member since {joined}</div>}
 
-            {/* ── Stats card ── */}
+            {/* ── Info card ── */}
             <div className="profile-card">
               <div className="profile-card-row">
                 <span className="card-label">Account</span>

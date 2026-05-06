@@ -21,8 +21,12 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
-  // add state
-  const [headerAvatar, setHeaderAvatar] = useState<string | null>(null);
+
+  // Persist avatar across page reloads
+  const [headerAvatar, setHeaderAvatar] = useState<string | null>(() => {
+    return localStorage.getItem('tg_music_avatar') || null;
+  });
+
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -60,6 +64,13 @@ export default function App() {
     setAuthed(true);
   }, []);
 
+  // Called by ProfilePanel when avatar is uploaded — persists to localStorage
+  const handleAvatarChange = useCallback((url: string) => {
+    const safe = url.replace(/^http:\/\//, 'https://');
+    setHeaderAvatar(safe);
+    localStorage.setItem('tg_music_avatar', safe);
+  }, []);
+
   const handleLogout = useCallback(async () => {
     haptic.tap();
     setProfileOpen(false);
@@ -68,6 +79,9 @@ export default function App() {
       headers: { Authorization: `Bearer ${getToken()}` },
     }).catch(() => {});
     clearToken();
+    // Clear persisted avatar on logout
+    localStorage.removeItem('tg_music_avatar');
+    setHeaderAvatar(null);
     setTracks([]);
     setAuthed(false);
   }, [haptic]);
@@ -109,13 +123,12 @@ export default function App() {
       <div className="header">
         <div className="header-row">
           <h1>Music <span>♪</span></h1>
-          {/* Avatar button — opens profile panel */}
           <button className="avatar-btn" onClick={handleAvatarClick} aria-label="Profile">
             {headerAvatar
-            ? <img src={headerAvatar} alt="avatar" />
-            : <span className="avatar-initials">Me</span>
+              ? <img src={headerAvatar} alt="avatar" />
+              : <span className="avatar-initials">Me</span>
             }
-        </button>
+          </button>
         </div>
         <SearchBar onSearch={handleSearch} loading={searching} />
       </div>
@@ -164,7 +177,7 @@ export default function App() {
         open={profileOpen}
         onClose={() => setProfileOpen(false)}
         onLogout={handleLogout}
-        onAvatarChange={setHeaderAvatar}
+        onAvatarChange={handleAvatarChange}
       />
     </div>
   );

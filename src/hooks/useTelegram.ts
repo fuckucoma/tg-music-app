@@ -33,7 +33,7 @@ const DEFAULT_LIGHT: TelegramTheme = {
 export function useTelegram() {
   const tg = window.Telegram?.WebApp;
 
-  const [theme, setTheme] = useState<TelegramTheme>(() => {
+  const [theme] = useState<TelegramTheme>(() => {
     if (!tg) return DEFAULT_DARK;
     const p = tg.themeParams;
     const isDark = tg.colorScheme === 'dark';
@@ -55,10 +55,17 @@ export function useTelegram() {
     tg.expand();
   }, [tg]);
 
+  // Wrapped in try/catch — HapticFeedback API varies across TG versions
   const haptic = {
-    tap: () => tg?.HapticFeedback?.impactOccurred('light'),
-    success: () => tg?.HapticFeedback?.notificationOccurred('success'),
-    error: () => tg?.HapticFeedback?.notificationOccurred('error'),
+    tap: () => {
+      try { tg?.HapticFeedback?.impactOccurred('light'); } catch {}
+    },
+    success: () => {
+      try { tg?.HapticFeedback?.notificationOccurred('success'); } catch {}
+    },
+    error: () => {
+      try { tg?.HapticFeedback?.notificationOccurred('error'); } catch {}
+    },
   };
 
   return { tg, theme, haptic };
