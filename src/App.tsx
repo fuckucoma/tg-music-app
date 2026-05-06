@@ -60,7 +60,18 @@ export default function App() {
     if (authed) load();
   }, [authed, load]);
 
-  const handleLoginSuccess = useCallback(() => {
+  const handleLoginSuccess = useCallback(async() => {
+    try {
+    const res = await fetch(`${BASE_URL}/users/profile`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    const data = await res.json();
+    if (data.profileImageUrl) {
+      const safe = data.profileImageUrl.replace(/^http:\/\//, 'https://');
+      setHeaderAvatar(safe);
+      localStorage.setItem('tg_music_avatar', safe);
+    }
+  } catch {}
     setAuthed(true);
   }, []);
 
