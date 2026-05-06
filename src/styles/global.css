@@ -145,6 +145,174 @@ html, body, #root {
 .login-btn:active:not(:disabled) { opacity: 0.8; }
 
 
+/* ── Avatar button (header) ───────────────────────────────── */
+.avatar-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: opacity .15s, transform .15s;
+}
+.avatar-btn:active { opacity: 0.7; transform: scale(0.92); }
+
+.avatar-initials {
+  font-size: 11px;
+  font-weight: 800;
+  font-family: 'Syne', sans-serif;
+  letter-spacing: 0.5px;
+  pointer-events: none;
+}
+
+/* ── Backdrop ─────────────────────────────────────────────── */
+.panel-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0);
+  z-index: 199;
+  pointer-events: none;
+  transition: background 0.3s;
+}
+.panel-backdrop.visible {
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: all;
+}
+
+/* ── Slide-up profile panel ───────────────────────────────── */
+.profile-panel {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  background: var(--bg2);
+  border-radius: 20px 20px 0 0;
+  border-top: 1px solid var(--border);
+  padding: 12px 24px 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  transform: translateY(100%);
+  transition: transform 0.35s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.profile-panel.open {
+  transform: translateY(0);
+}
+
+.panel-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.panel-loading {
+  padding: 40px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+/* ── Profile avatar (large) ───────────────────────────────── */
+.profile-avatar-lg {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  font-weight: 800;
+  font-family: 'Syne', sans-serif;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.profile-avatar-lg img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.profile-name {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.3px;
+}
+
+.profile-joined {
+  font-size: 13px;
+  color: var(--hint);
+  font-family: 'DM Mono', monospace;
+  margin-top: -6px;
+}
+
+.profile-divider {
+  width: 100%;
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* ── Stats row ────────────────────────────────────────────── */
+.profile-stats {
+  display: flex;
+  gap: 24px;
+  padding: 4px 0;
+}
+
+.profile-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--hint);
+  font-size: 14px;
+}
+
+.stat-icon { font-size: 18px; }
+.stat-label { font-family: 'DM Mono', monospace; }
+
+/* ── Profile action buttons ───────────────────────────────── */
+.profile-action-btn {
+  width: 100%;
+  height: 50px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: background .15s, border-color .15s;
+  margin-top: 4px;
+}
+.profile-action-btn:active { background: var(--border); }
+.profile-action-btn.danger {
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.3);
+}
+.profile-action-btn.danger:active {
+  background: rgba(255, 107, 107, 0.1);
+}
+
+
 /* ── Auth switch link ─────────────────────────────────────── */
 .auth-switch-btn {
   background: none;

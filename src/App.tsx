@@ -3,6 +3,7 @@ import { getTracks, searchTracks, getToken, clearToken, BASE_URL } from './api/t
 import { SearchBar } from './components/SearchBar';
 import { TrackItem } from './components/TrackItem';
 import { MiniPlayer } from './components/MiniPlayer';
+import { ProfilePanel } from './components/ProfilePanel';
 import { usePlayer } from './hooks/usePlayer';
 import { useTelegram } from './hooks/useTelegram';
 import { LoginScreen } from './components/LoginScreen';
@@ -19,6 +20,7 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [profileOpen, setProfileOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -56,9 +58,9 @@ export default function App() {
     setAuthed(true);
   }, []);
 
-  // ✅ MOVED UP — before any conditional return
   const handleLogout = useCallback(async () => {
     haptic.tap();
+    setProfileOpen(false);
     await fetch(`${BASE_URL}/users/logout`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${getToken()}` },
@@ -91,7 +93,11 @@ export default function App() {
     player.play(player.currentTrack);
   }, [player]);
 
-  // ✅ Conditional return is LAST — after every single hook
+  const handleAvatarClick = useCallback(() => {
+    haptic.tap();
+    setProfileOpen(true);
+  }, [haptic]);
+
   if (!authed) {
     return <LoginScreen onSuccess={handleLoginSuccess} />;
   }
@@ -101,12 +107,9 @@ export default function App() {
       <div className="header">
         <div className="header-row">
           <h1>Music <span>♪</span></h1>
-          <button className="logout-btn" onClick={handleLogout} aria-label="Logout">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-              <polyline points="16,17 21,12 16,7"/>
-              <line x1="21" y1="12" x2="9" y2="12"/>
-            </svg>
+          {/* Avatar button — opens profile panel */}
+          <button className="avatar-btn" onClick={handleAvatarClick} aria-label="Profile">
+            <span className="avatar-initials">Me</span>
           </button>
         </div>
         <SearchBar onSearch={handleSearch} loading={searching} />
@@ -151,6 +154,12 @@ export default function App() {
           onSeek={player.seek}
         />
       )}
+
+      <ProfilePanel
+        open={profileOpen}
+        onClose={() => setProfileOpen(false)}
+        onLogout={handleLogout}
+      />
     </div>
   );
 }
