@@ -73,6 +73,30 @@ export function usePlayer() {
     setProgress(0);
     setDuration(0);
     audio.src = track.streamUrl;
+    if ('mediaSession' in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: track.title,
+      artist: track.artist,
+      album: track.album ?? '',
+      artwork: track.coverUrl
+        ? [
+            { src: track.coverUrl, sizes: '512x512', type: 'image/jpeg' },
+          ]
+        : [],
+    });
+
+    navigator.mediaSession.setActionHandler('play', () => {
+      audio.play().catch(() => {});
+    });
+    navigator.mediaSession.setActionHandler('pause', () => {
+      audio.pause();
+    });
+    navigator.mediaSession.setActionHandler('stop', () => {
+      audio.pause();
+      audio.currentTime = 0;
+    });
+  }
+
     audio.load();
     audio.play().catch(() => setStatus('error'));
   }, [currentTrack]);

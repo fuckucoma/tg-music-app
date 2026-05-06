@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BASE_URL, getToken } from '../api/tracks';
 
 interface UserProfile {
@@ -12,11 +12,15 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onLogout: () => void;
+  onAvatarChange?: (url: string) => void;
 }
 
-export function ProfilePanel({ open, onClose, onLogout }: Props) {
+export function ProfilePanel({ open, onClose, onLogout, onAvatarChange }: Props) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -25,10 +29,38 @@ export function ProfilePanel({ open, onClose, onLogout }: Props) {
       headers: { Authorization: `Bearer ${getToken()}` },
     })
       .then(r => r.json())
-      .then(data => setProfile(data))
+      .then(data => {
+        setProfile(data);
+        setAvatarUrl(data.profileImageUrl ?? null);
+      })
       .catch(() => setProfile(null))
       .finally(() => setLoading(false));
   }, [open]);
+
+  const handleAvatarChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    const form = new FormData();
+    form.append('profileImage', file);
+    try {
+      const res = await fetch(`${BASE_URL}/users/uploadProfileImage`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${getToken()}` },
+        body: form,
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setAvatarUrl(data.profileImageUrl);
+        onAvatarChange?.(data.profileImageUrl);
+      }
+    } catch {}
+    finally { setUploading(false); }
+  };
+
+  const initials = profile?.username
+    ? profile.username.slice(0, 2).toUpperCase()
+    : '··';
 
   const joined = profile?.createdAt
     ? new Date(profile.createdAt).toLocaleDateString('en-US', {
@@ -36,53 +68,69 @@ export function ProfilePanel({ open, onClose, onLogout }: Props) {
       })
     : null;
 
-  const initials = profile?.username
-    ? profile.username.slice(0, 2).toUpperCase()
-    : '?';
-
   return (
     <>
-      {/* Backdrop */}
-      <div
-        className={`panel-backdrop ${open ? 'visible' : ''}`}
-        onClick={onClose}
-      />
+      <div className={`panel-backdrop ${open ? 'visible' : ''}`} onClick={onClose} />
 
-      {/* Slide-up panel */}
       <div className={`profile-panel ${open ? 'open' : ''}`}>
-        <div className="panel-handle" />
+        {/* Drag handle */}
+        <div className="panel-handle" onClick={onClose} />
 
         {loading ? (
-          <div className="panel-loading">
-            <span className="search-spinner" />
-          </div>
+          <div className="panel-loading"><span className="search-spinner" /></div>
         ) : profile ? (
-          <>
-            {/* Avatar */}
-            <div className="profile-avatar-lg">
-              {profile.profileImageUrl
-                ? <img src={profile.profileImageUrl} alt={profile.username} />
-                : <span>{initials}</span>
-              }
+          <div className="panel-inner">
+
+            {/* ── Avatar ── */}
+            <div className="profile-avatar-wrap">
+              <div className="profile-avatar-lg">
+                {avatarUrl
+                  ? <img src={avatarUrl} alt={profile.username} />
+                  : <span>{initials}</span>
+                }
+                {uploading && (
+                  <div className="avatar-uploading">
+                    <span className="mini-spinner" />
+                  </div>
+                )}
+              </div>
+              <button
+                className="avatar-edit-btn"
+                onClick={() => fileInputRef.current?.click()}
+                aria-label="Change avatar"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={handleAvatarChange}
+              />
             </div>
 
-            {/* Info */}
+            {/* ── Name & date ── */}
             <div className="profile-name">{profile.username}</div>
             {joined && <div className="profile-joined">Member since {joined}</div>}
 
-            <div className="profile-divider" />
-
-            {/* Stats row */}
-            <div className="profile-stats">
-              <div className="profile-stat">
-                <span className="stat-icon">🎵</span>
-                <span className="stat-label">Music lover</span>
+            {/* ── Stats card ── */}
+            <div className="profile-card">
+              <div className="profile-card-row">
+                <span className="card-label">Account</span>
+                <span className="card-value">Standard</span>
+              </div>
+              <div className="profile-card-divider" />
+              <div className="profile-card-row">
+                <span className="card-label">User ID</span>
+                <span className="card-value mono">#{profile.id}</span>
               </div>
             </div>
 
-            <div className="profile-divider" />
-
-            {/* Actions */}
+            {/* ── Sign out ── */}
             <button className="profile-action-btn danger" onClick={onLogout}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -91,7 +139,7 @@ export function ProfilePanel({ open, onClose, onLogout }: Props) {
               </svg>
               Sign out
             </button>
-          </>
+          </div>
         ) : (
           <div className="panel-loading">
             <span style={{ color: 'var(--hint)' }}>Could not load profile</span>

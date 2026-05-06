@@ -21,6 +21,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
+  // add state
+  const [headerAvatar, setHeaderAvatar] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -109,8 +111,11 @@ export default function App() {
           <h1>Music <span>♪</span></h1>
           {/* Avatar button — opens profile panel */}
           <button className="avatar-btn" onClick={handleAvatarClick} aria-label="Profile">
-            <span className="avatar-initials">Me</span>
-          </button>
+            {headerAvatar
+            ? <img src={headerAvatar} alt="avatar" />
+            : <span className="avatar-initials">Me</span>
+            }
+        </button>
         </div>
         <SearchBar onSearch={handleSearch} loading={searching} />
       </div>
@@ -159,6 +164,7 @@ export default function App() {
         open={profileOpen}
         onClose={() => setProfileOpen(false)}
         onLogout={handleLogout}
+        onAvatarChange={setHeaderAvatar}
       />
     </div>
   );
