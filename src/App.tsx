@@ -21,12 +21,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [profileOpen, setProfileOpen] = useState(false);
-
-  // Persist avatar across page reloads
-  const [headerAvatar, setHeaderAvatar] = useState<string | null>(() => {
-    return localStorage.getItem('tg_music_avatar') || null;
-  });
-
+  const [headerAvatar, setHeaderAvatar] = useState<string | null>(() =>
+    localStorage.getItem('tg_music_avatar') || null
+  );
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -46,36 +43,30 @@ export default function App() {
       const data = await getTracks();
       setTracks(data);
     } catch (e: any) {
-      if (e.message === 'UNAUTHORIZED') {
-        setAuthed(false);
-        return;
-      }
+      if (e.message === 'UNAUTHORIZED') { setAuthed(false); return; }
       setError('Could not load tracks.');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    if (authed) load();
-  }, [authed, load]);
+  useEffect(() => { if (authed) load(); }, [authed, load]);
 
-  const handleLoginSuccess = useCallback(async() => {
+  const handleLoginSuccess = useCallback(async () => {
     try {
-    const res = await fetch(`${BASE_URL}/users/profile`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    });
-    const data = await res.json();
-    if (data.profileImageUrl) {
-      const safe = data.profileImageUrl.replace(/^http:\/\//, 'https://');
-      setHeaderAvatar(safe);
-      localStorage.setItem('tg_music_avatar', safe);
-    }
-  } catch {}
+      const res = await fetch(`${BASE_URL}/users/profile`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
+      const data = await res.json();
+      if (data.profileImageUrl) {
+        const safe = data.profileImageUrl.replace(/^http:\/\//, 'https://');
+        setHeaderAvatar(safe);
+        localStorage.setItem('tg_music_avatar', safe);
+      }
+    } catch {}
     setAuthed(true);
   }, []);
 
-  // Called by ProfilePanel when avatar is uploaded — persists to localStorage
   const handleAvatarChange = useCallback((url: string) => {
     const safe = url.replace(/^http:\/\//, 'https://');
     setHeaderAvatar(safe);
@@ -90,7 +81,6 @@ export default function App() {
       headers: { Authorization: `Bearer ${getToken()}` },
     }).catch(() => {});
     clearToken();
-    // Clear persisted avatar on logout
     localStorage.removeItem('tg_music_avatar');
     setHeaderAvatar(null);
     setTracks([]);
@@ -103,17 +93,15 @@ export default function App() {
     try {
       const data = await searchTracks(q);
       setTracks(data);
-    } catch {
-      // keep existing list
-    } finally {
-      setSearching(false);
-    }
+    } catch {}
+    finally { setSearching(false); }
   }, []);
 
+  // Pass the full track list as queue context when a track is tapped
   const handlePlay = useCallback((track: Track) => {
     haptic.tap();
-    player.play(track);
-  }, [player, haptic]);
+    player.play(track, tracks);
+  }, [player, haptic, tracks]);
 
   const handlePlayPause = useCallback(() => {
     if (!player.currentTrack) return;
@@ -179,8 +167,20 @@ export default function App() {
           track={player.currentTrack}
           status={player.status}
           progress={player.progress}
+          duration={player.duration}
+          volume={player.volume}
+          shuffle={player.shuffle}
+          repeat={player.repeat}
+          queue={player.queue}
+          queueIndex={player.queueIndex}
           onPlayPause={handlePlayPause}
           onSeek={player.seek}
+          onNext={player.playNext}
+          onPrev={player.playPrev}
+          onChangeVolume={player.changeVolume}
+          onToggleShuffle={player.toggleShuffle}
+          onCycleRepeat={player.cycleRepeat}
+          onPlayFromQueue={(track) => player.play(track)}
         />
       )}
 
