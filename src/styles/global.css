@@ -272,6 +272,55 @@ html, body, #root {
   font-family: 'DM Mono', monospace;
 }
 
+/* ── Tabs ─────────────────────────────────────────────────── */
+.app-tabs {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  margin-bottom: 4px;
+}
+
+.app-tabs button {
+  flex: 1;
+  padding: 10px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--hint);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.app-tabs button.active {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+
+/* ── Heart Button ─────────────────────────────────────────── */
+.fav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: var(--hint);
+  border-radius: 50%;
+  margin-bottom: 2px;
+  transition: transform 0.15s, color 0.15s;
+}
+
+.fav-btn:active {
+  transform: scale(0.85);
+}
+
+.fav-btn.is-fav {
+  color: var(--accent);
+}
+
 /* ── Equaliser bars ───────────────────────────────────────── */
 
 .equaliser {
