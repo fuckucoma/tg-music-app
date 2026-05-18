@@ -57,33 +57,35 @@ export default function App() {
   };
 
   const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  setLoading(true);
+  setError(null);
+
+  try {
+    const tracksData = await getTracks();
+    setTracks(tracksData);
+
+    let favsData = { favorites: [] };
 
     try {
-      const tracksData = await getTracks();
-      setTracks(tracksData);
-
-      try {
-        const favsData = await getFavorites();
-        const favs = favsData.favorites || [];
-
-        setFavoriteTracks(normalizeFavorites(favs));
-        setFavoriteIds(new Set(favs.map((f: any) => Number(f.trackId))));
-      } catch {
-        console.warn('Favorites failed, ignoring');
-      }
-
-    } catch (e: any) {
-      if (e.message === 'UNAUTHORIZED') {
-        setAuthed(false);
-        return;
-      }
-      setError('Could not load tracks.');
-    } finally {
-      setLoading(false);
+      favsData = await getFavorites(); // ✅ теперь ок
+    } catch {
+      console.warn('Favorites failed, ignoring');
     }
-  }, []);
+
+    const favs = favsData.favorites || [];
+    setFavoriteTracks(normalizeFavorites(favs));
+    setFavoriteIds(new Set(favs.map((f: any) => Number(f.trackId))));
+
+  } catch (e: any) {
+    if (e.message === 'UNAUTHORIZED') {
+      setAuthed(false);
+      return;
+    }
+    setError('Could not load tracks.');
+  } finally {
+    setLoading(false);
+  }
+}, []);
 
   useEffect(() => {
     if (authed) load();

@@ -6,7 +6,7 @@ const TOKEN_KEY = 'tg_music_token';
 export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t: string) => localStorage.setItem(TOKEN_KEY, t);
 export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
-const tracksData = await getTracks();
+
 
 // ── Auth — NOTE: server uses "username", not "email" ──────
 export async function login(username: string, password: string): Promise<void> {
@@ -57,13 +57,6 @@ function normalise(raw: RawTrack) {
 export async function getTracks() {
   const data = await get<RawTrack[]>('/tracks');
   return data.map(normalise);
-}
-
-let favsData = { favorites: [] };
-try {
-  favsData = await getFavorites();
-} catch (e) {
-  console.warn('Favorites failed, ignoring');
 }
 
 // Add these to your existing api/tracks.ts
