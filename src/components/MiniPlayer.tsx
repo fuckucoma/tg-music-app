@@ -3,6 +3,7 @@ import type { Track } from '../types/track';
 import type { PlayerStatus } from '../types/track';
 import type { RepeatMode } from '../hooks/usePlayer';
 
+
 interface Props {
   track: Track;
   status: PlayerStatus;
@@ -36,7 +37,9 @@ export function MiniPlayer({
   const [expanded, setExpanded] = useState(false);
   const isPlaying = status === 'playing';
   const isLoading = status === 'loading';
-
+  const isTouchDevice = typeof window !== 'undefined' && window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+  
+  
   const handleSeekClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     onSeek(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
@@ -145,25 +148,21 @@ export function MiniPlayer({
             </button>
           </div>
 
-          {/* Volume
-              NOTE: on mobile browsers the HTML volume slider controls
-              the *media* volume within the page but iOS enforces that
-              the physical hardware buttons control the system volume.
-              The slider here adjusts the HTMLAudioElement.volume (0-1)
-              which acts as an additional software gain on top of system
-              volume — it works but is subtle on devices already at max. */}
-          <div className="fp-volume">
-            <VolumeIcon muted={volume === 0} />
-            <input
-              type="range"
-              className="fp-volume-slider"
-              min={0} max={1} step={0.01}
-              value={volume}
-              onChange={e => onChangeVolume(parseFloat(e.target.value))}
-              onTouchMove={e => e.stopPropagation()}
-            />
+          {/* Volume — hidden on touch devices (iOS controls volume via hardware buttons) */}
+          {!isTouchDevice && (
+           <div className="fp-volume">
+              <VolumeIcon muted={volume === 0} />
+                <input
+                  type="range"
+                      className="fp-volume-slider"
+                        min={0} max={1} step={0.01}
+                        value={volume}
+                        onChange={e => onChangeVolume(parseFloat(e.target.value))}
+                />
             <VolumeHighIcon />
           </div>
+        )}
+
         </div>
       )}
 
