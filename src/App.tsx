@@ -97,7 +97,6 @@ export default function App() {
     finally { setSearching(false); }
   }, []);
 
-  // Pass the full track list as queue context when a track is tapped
   const handlePlay = useCallback((track: Track) => {
     haptic.tap();
     player.play(track, tracks);
@@ -171,8 +170,6 @@ export default function App() {
           volume={player.volume}
           shuffle={player.shuffle}
           repeat={player.repeat}
-          queue={player.queue}
-          queueIndex={player.queueIndex}
           onPlayPause={handlePlayPause}
           onSeek={player.seek}
           onNext={player.playNext}
@@ -180,7 +177,6 @@ export default function App() {
           onChangeVolume={player.changeVolume}
           onToggleShuffle={player.toggleShuffle}
           onCycleRepeat={player.cycleRepeat}
-          onPlayFromQueue={(track) => player.play(track)}
         />
       )}
 

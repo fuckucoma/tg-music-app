@@ -15,13 +15,13 @@ interface Props {
   onAvatarChange?: (url: string) => void;
 }
 
-// Force https — Render returns http:// URLs but the app is on https://
 function toHttps(url: string): string {
   return url.replace(/^http:\/\//, 'https://');
 }
 
 export function ProfilePanel({ open, onClose, onLogout, onAvatarChange }: Props) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -30,18 +30,23 @@ export function ProfilePanel({ open, onClose, onLogout, onAvatarChange }: Props)
   useEffect(() => {
     if (!open) return;
     setLoading(true);
+    setLoadError(false);
     fetch(`${BASE_URL}/users/profile`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     })
       .then(r => r.json())
       .then(data => {
+        // If server returned an error object (e.g. 401/500), treat as failure
+        if (data.error) throw new Error(data.error);
         setProfile(data);
-        // Fix mixed content + sync header avatar
         const safe = data.profileImageUrl ? toHttps(data.profileImageUrl) : null;
         setAvatarUrl(safe);
         if (safe) onAvatarChange?.(safe);
       })
-      .catch(() => setProfile(null))
+      .catch(() => {
+        setProfile(null);
+        setLoadError(true);
+      })
       .finally(() => setLoading(false));
   }, [open]);
 
@@ -61,7 +66,7 @@ export function ProfilePanel({ open, onClose, onLogout, onAvatarChange }: Props)
       if (res.ok) {
         const safe = toHttps(data.profileImageUrl);
         setAvatarUrl(safe);
-        onAvatarChange?.(safe);  // updates header button + localStorage
+        onAvatarChange?.(safe);
       }
     } catch {}
     finally { setUploading(false); }
@@ -69,7 +74,7 @@ export function ProfilePanel({ open, onClose, onLogout, onAvatarChange }: Props)
 
   const initials = profile?.username
     ? profile.username.slice(0, 2).toUpperCase()
-    : '··';
+    : '??';
 
   const joined = profile?.createdAt
     ? new Date(profile.createdAt).toLocaleDateString('en-US', {
@@ -86,59 +91,76 @@ export function ProfilePanel({ open, onClose, onLogout, onAvatarChange }: Props)
 
         {loading ? (
           <div className="panel-loading"><span className="search-spinner" /></div>
-        ) : profile ? (
+        ) : (
           <div className="panel-inner">
 
-            {/* ── Avatar ── */}
-            <div className="profile-avatar-wrap">
-              <div className="profile-avatar-lg">
-                {avatarUrl
-                  ? <img src={avatarUrl} alt={profile.username} />
-                  : <span>{initials}</span>
-                }
-                {uploading && (
-                  <div className="avatar-uploading">
-                    <span className="mini-spinner" />
+            {loadError ? (
+              // ── Server unreachable — still show sign out ──
+              <>
+                <div className="profile-avatar-lg" style={{ marginBottom: 8 }}>
+                  <span>??</span>
+                </div>
+                <div className="profile-name" style={{ opacity: 0.5 }}>Offline</div>
+                <div className="profile-joined">Could not reach server</div>
+                <div className="profile-card">
+                  <div className="profile-card-row">
+                    <span className="card-label">Status</span>
+                    <span className="card-value" style={{ color: '#ff6b6b' }}>Unavailable</span>
                   </div>
-                )}
-              </div>
-              <button
-                className="avatar-edit-btn"
-                onClick={() => fileInputRef.current?.click()}
-                aria-label="Change avatar"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                </svg>
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                style={{ display: 'none' }}
-                onChange={handleAvatarChange}
-              />
-            </div>
+                </div>
+              </>
+            ) : profile ? (
+              // ── Normal profile view ──
+              <>
+                <div className="profile-avatar-wrap">
+                  <div className="profile-avatar-lg">
+                    {avatarUrl
+                      ? <img src={avatarUrl} alt={profile.username} />
+                      : <span>{initials}</span>
+                    }
+                    {uploading && (
+                      <div className="avatar-uploading">
+                        <span className="mini-spinner" />
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    className="avatar-edit-btn"
+                    onClick={() => fileInputRef.current?.click()}
+                    aria-label="Change avatar"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={handleAvatarChange}
+                  />
+                </div>
 
-            {/* ── Name & date ── */}
-            <div className="profile-name">{profile.username}</div>
-            {joined && <div className="profile-joined">Member since {joined}</div>}
+                <div className="profile-name">{profile.username}</div>
+                {joined && <div className="profile-joined">Member since {joined}</div>}
 
-            {/* ── Info card ── */}
-            <div className="profile-card">
-              <div className="profile-card-row">
-                <span className="card-label">Account</span>
-                <span className="card-value">Standard</span>
-              </div>
-              <div className="profile-card-divider" />
-              <div className="profile-card-row">
-                <span className="card-label">User ID</span>
-                <span className="card-value mono">#{profile.id}</span>
-              </div>
-            </div>
+                <div className="profile-card">
+                  <div className="profile-card-row">
+                    <span className="card-label">Account</span>
+                    <span className="card-value">Standard</span>
+                  </div>
+                  <div className="profile-card-divider" />
+                  <div className="profile-card-row">
+                    <span className="card-label">User ID</span>
+                    <span className="card-value mono">#{profile.id}</span>
+                  </div>
+                </div>
+              </>
+            ) : null}
 
-            {/* ── Sign out ── */}
+            {/* Sign out — always visible regardless of server state */}
             <button className="profile-action-btn danger" onClick={onLogout}>
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -147,10 +169,7 @@ export function ProfilePanel({ open, onClose, onLogout, onAvatarChange }: Props)
               </svg>
               Sign out
             </button>
-          </div>
-        ) : (
-          <div className="panel-loading">
-            <span style={{ color: 'var(--hint)' }}>Could not load profile</span>
+
           </div>
         )}
       </div>

@@ -6,13 +6,11 @@ import type { RepeatMode } from '../hooks/usePlayer';
 interface Props {
   track: Track;
   status: PlayerStatus;
-  progress: number;       // 0–1
-  duration: number;       // seconds
-  volume: number;         // 0–1
+  progress: number;
+  duration: number;
+  volume: number;
   shuffle: boolean;
   repeat: RepeatMode;
-  queue: Track[];
-  queueIndex: number;
   onPlayPause: () => void;
   onSeek: (ratio: number) => void;
   onNext: () => void;
@@ -20,7 +18,6 @@ interface Props {
   onChangeVolume: (v: number) => void;
   onToggleShuffle: () => void;
   onCycleRepeat: () => void;
-  onPlayFromQueue: (track: Track) => void;
 }
 
 function fmt(secs: number): string {
@@ -32,10 +29,9 @@ function fmt(secs: number): string {
 
 export function MiniPlayer({
   track, status, progress, duration, volume,
-  shuffle, repeat, queue, queueIndex,
+  shuffle, repeat,
   onPlayPause, onSeek, onNext, onPrev,
   onChangeVolume, onToggleShuffle, onCycleRepeat,
-  onPlayFromQueue,
 }: Props) {
   const [expanded, setExpanded] = useState(false);
   const isPlaying = status === 'playing';
@@ -46,9 +42,11 @@ export function MiniPlayer({
     onSeek(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
   };
 
+  // Touch seek — tracks finger drag across the bar
   const handleSeekTouch = (e: React.TouchEvent<HTMLDivElement>) => {
+    e.preventDefault();
     const rect = e.currentTarget.getBoundingClientRect();
-    const touch = e.touches[0];
+    const touch = e.touches[0] ?? e.changedTouches[0];
     onSeek(Math.max(0, Math.min(1, (touch.clientX - rect.left) / rect.width)));
   };
 
@@ -96,6 +94,7 @@ export function MiniPlayer({
             <div
               className="fp-seek-track"
               onClick={handleSeekClick}
+              onTouchStart={handleSeekTouch}
               onTouchMove={handleSeekTouch}
             >
               <div className="fp-seek-fill" style={{ width: `${progress * 100}%` }}>
@@ -146,7 +145,13 @@ export function MiniPlayer({
             </button>
           </div>
 
-          {/* Volume */}
+          {/* Volume
+              NOTE: on mobile browsers the HTML volume slider controls
+              the *media* volume within the page but iOS enforces that
+              the physical hardware buttons control the system volume.
+              The slider here adjusts the HTMLAudioElement.volume (0-1)
+              which acts as an additional software gain on top of system
+              volume — it works but is subtle on devices already at max. */}
           <div className="fp-volume">
             <VolumeIcon muted={volume === 0} />
             <input
@@ -155,46 +160,14 @@ export function MiniPlayer({
               min={0} max={1} step={0.01}
               value={volume}
               onChange={e => onChangeVolume(parseFloat(e.target.value))}
+              onTouchMove={e => e.stopPropagation()}
             />
             <VolumeHighIcon />
           </div>
-
-          {/* Queue */}
-          {queue.length > 0 && (
-            <div className="fp-queue">
-              <div className="fp-queue-header">Queue</div>
-              <div className="fp-queue-list">
-                {queue.map((t, i) => (
-                  <button
-                    key={t.id}
-                    className={`fp-queue-item ${i === queueIndex ? 'active' : ''}`}
-                    onClick={() => onPlayFromQueue(t)}
-                  >
-                    <div className="fp-queue-cover">
-                      {t.coverUrl
-                        ? <img src={t.coverUrl} alt={t.title} />
-                        : <span>♪</span>
-                      }
-                      {i === queueIndex && isPlaying && (
-                        <div className="fp-queue-playing">
-                          <span /><span /><span /><span />
-                        </div>
-                      )}
-                    </div>
-                    <div className="fp-queue-info">
-                      <span className="fp-queue-title">{t.title}</span>
-                      <span className="fp-queue-artist">{t.artist}</span>
-                    </div>
-                    {i === queueIndex && <span className="fp-queue-dot" />}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
 
-      {/* ── Mini bar (always visible when track is loaded) ── */}
+      {/* ── Mini bar ── */}
       <div className="mini-player">
         <div
           className="progress-track"
@@ -218,7 +191,6 @@ export function MiniPlayer({
             <span className="player-artist">{track.artist}</span>
           </div>
 
-          {/* Mini controls — stop propagation so clicking them doesn't expand */}
           <div className="mini-controls" onClick={e => e.stopPropagation()}>
             <button className="mini-ctrl-btn" onClick={onPrev} aria-label="Previous">
               <PrevIcon size={16} />
@@ -242,102 +214,34 @@ export function MiniPlayer({
 // ── Icons ──────────────────────────────────────────────────
 
 function PlayIcon({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
-      <polygon points="5,3 19,12 5,21" />
-    </svg>
-  );
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21" /></svg>;
 }
-
 function PauseIcon({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
-      <rect x="6" y="4" width="4" height="16" rx="1"/>
-      <rect x="14" y="4" width="4" height="16" rx="1"/>
-    </svg>
-  );
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>;
 }
-
 function PrevIcon({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
-      <polygon points="19,20 9,12 19,4"/>
-      <rect x="5" y="4" width="2.5" height="16" rx="1"/>
-    </svg>
-  );
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><polygon points="19,20 9,12 19,4"/><rect x="5" y="4" width="2.5" height="16" rx="1"/></svg>;
 }
-
 function NextIcon({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
-      <polygon points="5,4 15,12 5,20"/>
-      <rect x="16.5" y="4" width="2.5" height="16" rx="1"/>
-    </svg>
-  );
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor"><polygon points="5,4 15,12 5,20"/><rect x="16.5" y="4" width="2.5" height="16" rx="1"/></svg>;
 }
-
 function ShuffleIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="16 3 21 3 21 8"/>
-      <line x1="4" y1="20" x2="21" y2="3"/>
-      <polyline points="21 16 21 21 16 21"/>
-      <line x1="15" y1="15" x2="21" y2="21"/>
-      <line x1="4" y1="4" x2="9" y2="9"/>
-    </svg>
-  );
+  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>;
 }
-
 function RepeatIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="17 1 21 5 17 9"/>
-      <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
-      <polyline points="7 23 3 19 7 15"/>
-      <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
-    </svg>
-  );
+  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>;
 }
-
 function RepeatOneIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="17 1 21 5 17 9"/>
-      <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
-      <polyline points="7 23 3 19 7 15"/>
-      <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
-      <text x="11" y="14" fontSize="7" fill="currentColor" stroke="none" fontWeight="bold" textAnchor="middle">1</text>
-    </svg>
-  );
+  return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/><text x="11" y="14" fontSize="7" fill="currentColor" stroke="none" fontWeight="bold" textAnchor="middle">1</text></svg>;
 }
-
 function ChevronDownIcon() {
-  return (
-    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-      <polyline points="6 9 12 15 18 9"/>
-    </svg>
-  );
+  return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>;
 }
-
 function VolumeIcon({ muted }: { muted: boolean }) {
-  return muted ? (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-      <line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>
-    </svg>
-  ) : (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-    </svg>
-  );
+  return muted
+    ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/></svg>
+    : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/></svg>;
 }
-
 function VolumeHighIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-      <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-      <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-    </svg>
-  );
+  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>;
 }
