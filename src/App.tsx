@@ -50,7 +50,6 @@ export default function App() {
       artist: f.artist,
       coverUrl: f.imageUrl,
       filename: f.filename,
-      duration: f.duration || 0,
       album: f.album || '',
       streamUrl: `${BASE_URL}/tracks/${f.trackId}/stream`
     }));
