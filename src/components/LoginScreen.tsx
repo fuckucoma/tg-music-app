@@ -1,15 +1,13 @@
-import { useState } from 'react';
-import { login } from '../api/tracks';
-import { RegisterScreen } from './RegisterScreen';
+import { useState } from "react"
+import { login } from "../api/tracks"
+import { RegisterScreen } from "./RegisterScreen"
 
-interface Props { onSuccess: () => void; }
-
-export function LoginScreen({ onSuccess }: Props) {
-  const [showRegister, setShowRegister] = useState(false);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
+  const [showRegister, setShowRegister] = useState(false)
+  const [username, setUsername] = useState("")
+  const [password, setPassword] = useState("")
+  const [error, setError] = useState("")
+  const [loading, setLoading] = useState(false)
 
   if (showRegister) {
     return (
@@ -17,63 +15,87 @@ export function LoginScreen({ onSuccess }: Props) {
         onSuccess={onSuccess}
         onBack={() => setShowRegister(false)}
       />
-    );
+    )
   }
 
   const handleSubmit = async () => {
-    if (!username || !password) return;
-    setLoading(true);
-    setError('');
+    if (!username || !password) return
+    setLoading(true)
+    setError("")
+
     try {
-      await login(username, password);
-      onSuccess();
+      await login(username, password)
+      onSuccess()
     } catch (e: any) {
-      setError(e.message ?? 'Login failed');
+      setError(e.message || "Login failed")
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   return (
-    <div className="login-screen">
-      <div className="login-card">
-        <div className="login-icon">♪</div>
-        <h2>Sign in</h2>
-        <p className="login-sub">Enter your credentials</p>
+    <div className="min-h-screen flex items-center justify-center px-4 bg-background text-foreground">
+      
+      <div className="w-full max-w-sm space-y-4 bg-card p-6 rounded-2xl shadow-lg border">
+        
+        {/* Icon */}
+        <div className="text-4xl text-center">♪</div>
 
+        {/* Title */}
+        <h2 className="text-2xl font-bold text-center">
+          Sign in
+        </h2>
+
+        <p className="text-sm text-muted-foreground text-center">
+          Enter your credentials
+        </p>
+
+        {/* Inputs */}
         <input
-          className="login-input"
+          className="w-full h-12 px-4 rounded-xl border bg-background outline-none focus:ring-2 focus:ring-primary"
           type="text"
           placeholder="Username"
           value={username}
           onChange={e => setUsername(e.target.value)}
-          autoComplete="username"
-          autoCapitalize="none"
         />
+
         <input
-          className="login-input"
+          className="w-full h-12 px-4 rounded-xl border bg-background outline-none focus:ring-2 focus:ring-primary"
           type="password"
           placeholder="Password"
           value={password}
           onChange={e => setPassword(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-          autoComplete="current-password"
+          onKeyDown={e => e.key === "Enter" && handleSubmit()}
         />
 
-        {error && <p className="login-error">{error}</p>}
+        {/* Error */}
+        {error && (
+          <p className="text-sm text-red-500 text-center">
+            {error}
+          </p>
+        )}
 
+        {/* Button */}
         <button
-          className="login-btn"
           onClick={handleSubmit}
           disabled={loading || !username || !password}
+          className="w-full h-12 rounded-xl bg-primary text-primary-foreground font-semibold flex items-center justify-center disabled:opacity-40"
         >
-          {loading ? <span className="btn-spinner" /> : 'Sign in'}
+          {loading ? "..." : "Sign in"}
         </button>
 
-        <button className="auth-switch-btn" onClick={() => setShowRegister(true)}>
-          No account? <span>Create one</span>
+        {/* Switch */}
+        <button
+          onClick={() => setShowRegister(true)}
+          className="text-sm text-center text-muted-foreground"
+        >
+          No account?{" "}
+          <span className="text-primary font-semibold">
+            Create one
+          </span>
         </button>
+
       </div>
     </div>
-  );
+  )
 }
