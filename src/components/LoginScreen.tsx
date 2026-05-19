@@ -79,7 +79,7 @@ export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
         <button
           onClick={handleSubmit}
           disabled={loading || !username || !password}
-          className="w-full h-12 rounded-xl bg-red-500 text-primary-foreground font-semibold flex items-center justify-center disabled:opacity-40"
+          className="w-full h-12 rounded-xl bg-primary text-primary-foreground font-semibold flex items-center justify-center disabled:opacity-40"
         >
           {loading ? "..." : "Sign in"}
         </button>
