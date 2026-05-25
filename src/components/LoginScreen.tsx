@@ -1,13 +1,15 @@
-import { useState } from "react"
-import { login } from "../api/tracks"
-import { RegisterScreen } from "./RegisterScreen"
+import { useState } from 'react';
+import { login } from '../api/tracks';
+import { RegisterScreen } from './RegisterScreen';
 
-export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
-  const [showRegister, setShowRegister] = useState(false)
-  const [username, setUsername] = useState("")
-  const [password, setPassword] = useState("")
-  const [error, setError] = useState("")
-  const [loading, setLoading] = useState(false)
+interface Props { onSuccess: () => void; }
+
+export function LoginScreen({ onSuccess }: Props) {
+  const [showRegister, setShowRegister] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
   if (showRegister) {
     return (
@@ -15,87 +17,96 @@ export function LoginScreen({ onSuccess }: { onSuccess: () => void }) {
         onSuccess={onSuccess}
         onBack={() => setShowRegister(false)}
       />
-    )
+    );
   }
 
   const handleSubmit = async () => {
-    if (!username || !password) return
-    setLoading(true)
-    setError("")
-
+    if (!username || !password) return;
+    setLoading(true);
+    setError('');
     try {
-      await login(username, password)
-      onSuccess()
+      await login(username, password);
+      onSuccess();
     } catch (e: any) {
-      setError(e.message || "Login failed")
+      setError(e.message ?? 'Login failed');
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 bg-background text-foreground">
+  <div className="min-h-screen flex items-center justify-center bg-black px-4">
+    
+    <div className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl">
       
-      <div className="w-full max-w-sm space-y-4 bg-card p-6 rounded-2xl shadow-lg border">
-        
-        {/* Icon */}
-        <div className="text-4xl text-center">♪</div>
+      {/* Logo */}
+      <div className="text-center mb-3">
+        <div className="text-5xl mb-">♪</div>
 
-        {/* Title */}
-        <h2 className="text-2xl font-bold text-center">
+        <h1 className="text-3xl font-bold  text-white">
           Sign in
-        </h2>
+        </h1>
 
-        <p className="text-sm text-muted-foreground text-center">
+        <p className="text-zinc-400 mt-1">
           Enter your credentials
         </p>
+      </div>
 
-        {/* Inputs */}
+      {/* Inputs */}
+      <div className="space-y-3">
+
         <input
-          className="w-full h-12 px-4 rounded-xl border bg-background outline-none focus:ring-2 focus:ring-primary"
+          className="w-full h-10 rounded-xl bg-zinc-800 border border-zinc-700 px-4 text-white placeholder:text-zinc-500 outline-none focus:border-white transition"
           type="text"
           placeholder="Username"
           value={username}
           onChange={e => setUsername(e.target.value)}
+          autoComplete="username"
+          autoCapitalize="none"
         />
 
         <input
-          className="w-full h-12 px-4 rounded-xl border bg-background outline-none focus:ring-2 focus:ring-primary"
+          className="w-full h-10 rounded-xl bg-zinc-800 border border-zinc-700 px-4 text-white placeholder:text-zinc-500 outline-none focus:border-white transition"
           type="password"
           placeholder="Password"
           value={password}
           onChange={e => setPassword(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && handleSubmit()}
+          onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+          autoComplete="current-password"
         />
 
-        {/* Error */}
-        {error && (
-          <p className="text-sm text-red-500 text-center">
-            {error}
-          </p>
-        )}
-
-        {/* Button */}
-        <button
-          onClick={handleSubmit}
-          disabled={loading || !username || !password}
-          className="w-full h-12 rounded-xl bg-primary text-primary-foreground font-semibold flex items-center justify-center disabled:opacity-40"
-        >
-          {loading ? "..." : "Sign in"}
-        </button>
-
-        {/* Switch */}
-        <button
-          onClick={() => setShowRegister(true)}
-          className="text-sm text-center text-muted-foreground"
-        >
-          No account?{" "}
-          <span className="text-primary font-semibold">
-            Create one
-          </span>
-        </button>
-
       </div>
+
+      {/* Error */}
+      {error && (
+        <p className="text-red-500 text-sm text-center mt-3">
+          {error}
+        </p>
+      )}
+
+      {/* Button */}
+      <button
+        className="w-full h-10 rounded-xl bg-white text-black font-semibold mt-4 transition hover:opacity-90 disabled:opacity-40"
+        onClick={handleSubmit}
+        disabled={loading || !username || !password}
+      >
+        {loading ? 'Loading...' : 'Sign in'}
+      </button>
+
+      {/* Switch */}
+      <button
+        className="w-full text-sm text-zinc-400 mt-4"
+        onClick={() => setShowRegister(true)}
+      >
+        No account?{" "}
+        <span className="text-white font-semibold">
+          Create one
+        </span>
+      </button>
+
     </div>
-  )
+
+  </div>
+)
+
 }

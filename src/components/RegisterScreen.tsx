@@ -44,14 +44,26 @@ export function RegisterScreen({ onSuccess, onBack }: Props) {
   };
 
   return (
-    <div className="login-screen">
-      <div className="login-card">
-        <div className="login-icon">🎵</div>
-        <h2>Create account</h2>
-        <p className="login-sub">Pick a username and password</p>
+  <div className="min-h-screen flex items-center justify-center bg-black px-4">
+
+    <div className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl">
+
+      {/* Logo */}
+      <div className="text-center mb-6">
+
+        <div className="text-5xl mb-3">♪</div>
+
+        <h1 className="text-3xl font-bold text-white">
+          Create account
+        </h1>
+
+      </div>
+
+      {/* Inputs */}
+      <div className="space-y-3">
 
         <input
-          className="login-input"
+          className="w-full h-10 rounded-xl bg-zinc-800 border border-zinc-700 px-4 text-white placeholder:text-zinc-500 outline-none focus:border-white transition"
           type="text"
           placeholder="Username"
           value={username}
@@ -59,38 +71,62 @@ export function RegisterScreen({ onSuccess, onBack }: Props) {
           autoComplete="username"
           autoCapitalize="none"
         />
+
         <input
-          className="login-input"
+          className="w-full h-10 rounded-xl bg-zinc-800 border border-zinc-700 px-4 text-white placeholder:text-zinc-500 outline-none focus:border-white transition"
           type="password"
           placeholder="Password"
           value={password}
           onChange={e => setPassword(e.target.value)}
           autoComplete="new-password"
         />
+
         <input
-          className="login-input"
+          className="w-full h-10   rounded-xl bg-zinc-800 border border-zinc-700 px-4 text-white placeholder:text-zinc-500 outline-none focus:border-white transition"
           type="password"
           placeholder="Confirm password"
           value={confirm}
           onChange={e => setConfirm(e.target.value)}
-          autoComplete="new-password"
           onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+          autoComplete="new-password"
         />
 
-        {error && <p className="login-error">{error}</p>}
-
-        <button
-          className="login-btn"
-          onClick={handleSubmit}
-          disabled={loading || !username || !password || !confirm}
-        >
-          {loading ? <span className="btn-spinner" /> : 'Create account'}
-        </button>
-
-        <button className="auth-switch-btn" onClick={onBack}>
-          Already have an account? <span>Sign in</span>
-        </button>
       </div>
+
+      {/* Error */}
+      {error && (
+        <p className="text-red-500 text-sm text-center mt-3">
+          {error}
+        </p>
+      )}
+
+      {/* Button */}
+      <button
+        className="w-full h-12 rounded-xl bg-white text-black font-semibold mt-4 transition hover:opacity-90 disabled:opacity-40"
+        onClick={handleSubmit}
+        disabled={
+          loading ||
+          !username ||
+          !password ||
+          !confirm
+        }
+      >
+        {loading ? 'Loading...' : 'Create account'}
+      </button>
+
+      {/* Back */}
+      <button
+        className="w-full text-sm text-zinc-400 mt-4"
+        onClick={onBack}
+      >
+        Already have an account?{" "}
+        <span className="text-white font-semibold">
+          Sign in
+        </span>
+      </button>
+
     </div>
-  );
+
+  </div>
+)
 }
