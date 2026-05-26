@@ -69,7 +69,7 @@ export function LoginScreen({ onSuccess }: Props) {
 
         {/* Submit */}
         <button
-          className="w-full h-12 rounded-2xl bg-accent text-accent-fg font-semibold text-[15px] transition-opacity disabled:opacity-40 active:opacity-75"
+          className="w-full h-12 hover:opacity-80 duration-200 rounded-2xl bg-accent text-accent-fg font-semibold text-[15px] transition-opacity disabled:opacity-40 active:opacity-75"
           onClick={handleSubmit}
           disabled={loading || !username || !password}
         >
@@ -81,7 +81,7 @@ export function LoginScreen({ onSuccess }: Props) {
 
         {/* Switch */}
         <button
-          className="text-sm text-muted text-center"
+          className="text-sm text-muted text-center hover:opacity-80 duration-200 transition-opacity"
           onClick={() => setShowRegister(true)}
         >
           No account?{' '}

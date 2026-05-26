@@ -53,7 +53,7 @@ export function RegisterScreen({ onSuccess, onBack }: Props) {
         {error && <p className="text-danger text-sm text-center -mt-2">{error}</p>}
 
         <button
-          className="w-full h-12 rounded-2xl bg-accent text-accent-fg font-semibold text-[15px] transition-opacity disabled:opacity-40 active:opacity-75"
+          className="w-full h-12 hover:opacity-80 duration-200 rounded-2xl bg-accent text-accent-fg font-semibold text-[15px] transition-opacity disabled:opacity-40 active:opacity-75"
           onClick={handleSubmit}
           disabled={loading || !username || !password || !confirm}
         >
@@ -63,7 +63,7 @@ export function RegisterScreen({ onSuccess, onBack }: Props) {
           }
         </button>
 
-        <button className="text-sm text-muted text-center" onClick={onBack}>
+        <button className="hover:opacity-80 duration-200 text-sm text-muted text-center" onClick={onBack}>
           Already have an account?{' '}
           <span className="text-accent font-semibold">Sign in</span>
         </button>
