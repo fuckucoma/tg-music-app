@@ -30,14 +30,19 @@ export function LoginScreen({ onSuccess }: Props) {
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-bg px-6">
-      <div className="w-full max-w-sm flex flex-col gap-6">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-bg to-surface px-6">
+      <div className="w-full max-w-sm flex flex-col gap-5 bg-surface/70 backdrop-blur-xl border border-border rounded-3xl p-6 shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
 
         {/* Logo */}
         <div className="text-center">
-          <div className="text-6xl mb-4 select-none">♪</div>
+          <div className="relative mb-4 flex justify-center">
+            <div className="absolute w-20 h-20 bg-accent/20 blur-3xl rounded-full" />
+            <div className="relative text-6xl select-none">♪</div>
+        </div>
+
           <h1 className="text-3xl font-semibold text-text tracking-tight">Welcome back</h1>
           <p className="text-muted text-sm mt-1">Sign in to your account</p>
+          
         </div>
 
         {/* Fields */}

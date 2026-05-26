@@ -15,6 +15,7 @@ export default {
       fontFamily: {
         sans: ['Inter', 'system-ui', 'sans-serif'],
         mono: ['DM Mono', 'monospace'],
+        display: ['Syne', 'sans-serif'],
       },
       borderRadius: {
         '2xl': '16px',

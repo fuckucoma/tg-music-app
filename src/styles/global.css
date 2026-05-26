@@ -26,6 +26,16 @@ html, body, #root {
   overflow: hidden;
 }
 
+button,
+input,
+img {
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+
 /* ── Range input (volume slider) ──────────────────────────── */
 input[type='range'] {
   -webkit-appearance: none;

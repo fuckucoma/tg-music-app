@@ -35,8 +35,8 @@ export function RegisterScreen({ onSuccess, onBack }: Props) {
   const inputCls = 'w-full h-12 rounded-2xl bg-surface border border-[var(--border)] px-4 text-text placeholder:text-muted text-[15px] outline-none focus:border-accent transition-colors';
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-bg px-6">
-      <div className="w-full max-w-sm flex flex-col gap-6">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-bg to-surface px-6">
+      <div className="w-full max-w-sm flex flex-col gap-5 bg-surface/70 backdrop-blur-xl border border-border rounded-3xl p-6 shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
 
         <div className="text-center">
           <div className="text-6xl mb-4 select-none">♪</div>
