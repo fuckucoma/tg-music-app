@@ -12,12 +12,7 @@ export function LoginScreen({ onSuccess }: Props) {
   const [loading, setLoading] = useState(false);
 
   if (showRegister) {
-    return (
-      <RegisterScreen
-        onSuccess={onSuccess}
-        onBack={() => setShowRegister(false)}
-      />
-    );
+    return <RegisterScreen onSuccess={onSuccess} onBack={() => setShowRegister(false)} />;
   }
 
   const handleSubmit = async () => {
@@ -35,78 +30,65 @@ export function LoginScreen({ onSuccess }: Props) {
   };
 
   return (
-  <div className="min-h-screen flex items-center justify-center bg-black px-4">
-    
-    <div className="w-full max-w-sm bg-zinc-900 border border-zinc-800 rounded-3xl p-6 shadow-2xl">
-      
-      {/* Logo */}
-      <div className="text-center mb-3">
-        <div className="text-5xl mb-">♪</div>
+    <div className="min-h-screen flex flex-col items-center justify-center bg-bg px-6">
+      <div className="w-full max-w-sm flex flex-col gap-6">
 
-        <h1 className="text-3xl font-bold  text-white">
-          Sign in
-        </h1>
+        {/* Logo */}
+        <div className="text-center">
+          <div className="text-6xl mb-4 select-none">♪</div>
+          <h1 className="text-3xl font-semibold text-text tracking-tight">Welcome back</h1>
+          <p className="text-muted text-sm mt-1">Sign in to your account</p>
+        </div>
 
-        <p className="text-zinc-400 mt-1">
-          Enter your credentials
-        </p>
+        {/* Fields */}
+        <div className="flex flex-col gap-3">
+          <input
+            className="w-full h-12 rounded-2xl bg-surface border border-[var(--border)] px-4 text-text placeholder:text-muted text-[15px] outline-none focus:border-accent transition-colors"
+            type="text"
+            placeholder="Username"
+            value={username}
+            onChange={e => setUsername(e.target.value)}
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+          />
+          <input
+            className="w-full h-12 rounded-2xl bg-surface border border-[var(--border)] px-4 text-text placeholder:text-muted text-[15px] outline-none focus:border-accent transition-colors"
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+            autoComplete="current-password"
+          />
+        </div>
+
+        {error && (
+          <p className="text-danger text-sm text-center -mt-2">{error}</p>
+        )}
+
+        {/* Submit */}
+        <button
+          className="w-full h-12 rounded-2xl bg-accent text-accent-fg font-semibold text-[15px] transition-opacity disabled:opacity-40 active:opacity-75"
+          onClick={handleSubmit}
+          disabled={loading || !username || !password}
+        >
+          {loading
+            ? <span className="inline-block w-5 h-5 border-2 border-accent-fg/30 border-t-accent-fg rounded-full animate-spin-slow" />
+            : 'Sign in'
+          }
+        </button>
+
+        {/* Switch */}
+        <button
+          className="text-sm text-muted text-center"
+          onClick={() => setShowRegister(true)}
+        >
+          No account?{' '}
+          <span className="text-accent font-semibold">Create one</span>
+        </button>
+
       </div>
-
-      {/* Inputs */}
-      <div className="space-y-3">
-
-        <input
-          className="w-full h-10 rounded-xl bg-zinc-800 border border-zinc-700 px-4 text-white placeholder:text-zinc-500 outline-none focus:border-white transition"
-          type="text"
-          placeholder="Username"
-          value={username}
-          onChange={e => setUsername(e.target.value)}
-          autoComplete="username"
-          autoCapitalize="none"
-        />
-
-        <input
-          className="w-full h-10 rounded-xl bg-zinc-800 border border-zinc-700 px-4 text-white placeholder:text-zinc-500 outline-none focus:border-white transition"
-          type="password"
-          placeholder="Password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-          autoComplete="current-password"
-        />
-
-      </div>
-
-      {/* Error */}
-      {error && (
-        <p className="text-red-500 text-sm text-center mt-3">
-          {error}
-        </p>
-      )}
-
-      {/* Button */}
-      <button
-        className="w-full h-10 rounded-xl bg-white text-black font-semibold mt-4 transition hover:opacity-90 disabled:opacity-40"
-        onClick={handleSubmit}
-        disabled={loading || !username || !password}
-      >
-        {loading ? 'Loading...' : 'Sign in'}
-      </button>
-
-      {/* Switch */}
-      <button
-        className="w-full text-sm text-zinc-400 mt-4"
-        onClick={() => setShowRegister(true)}
-      >
-        No account?{" "}
-        <span className="text-white font-semibold">
-          Create one
-        </span>
-      </button>
-
     </div>
-
-  </div>
-)
-
+  );
 }
