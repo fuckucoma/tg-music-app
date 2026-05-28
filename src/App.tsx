@@ -8,6 +8,7 @@ import { usePlayer }    from './hooks/usePlayer';
 import { useTelegram }  from './hooks/useTelegram';
 import { LoginScreen }  from './components/LoginScreen';
 import type { Track }   from './types/track';
+import { supabase } from './lib/supabase'
 
 type Tab = 'all' | 'favorites';
 
@@ -28,6 +29,8 @@ export default function App() {
   const [headerAvatar, setHeaderAvatar] = useState<string | null>(() => localStorage.getItem('tg_music_avatar') || null);
   const listRef = useRef<HTMLDivElement>(null);
 
+
+  
   // ── Normalize favorites from server response ──────────────
   const normalizeFavs = useCallback((favs: any[]): Track[] =>
     favs.map(f => ({
@@ -65,6 +68,27 @@ export default function App() {
   }, [normalizeFavs]);
 
   useEffect(() => { if (authed) load(); }, [authed, load]);
+
+  useEffect(() => {
+  const channel = supabase
+    .channel('tracks-realtime')
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'Track',
+      },
+      () => {
+        load()
+      }
+    )
+    .subscribe()
+
+  return () => {
+    supabase.removeChannel(channel)
+  }
+}, [load])
 
   // ── Auth ──────────────────────────────────────────────────
   const handleLoginSuccess = useCallback(async () => {
@@ -118,6 +142,7 @@ export default function App() {
     finally { setSearching(false); }
   }, []);
 
+  
   // ── Player ────────────────────────────────────────────────
   const displayed   = tab === 'favorites' ? favTracks : tracks;
   const handlePlay  = useCallback((track: Track) => { haptic.tap(); player.play(track, displayed); }, [player, haptic, displayed]);
