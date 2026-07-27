@@ -3,17 +3,42 @@ export const BASE_URL =
 
 // ── Token ─────────────────────────────────────────────────
 const TOKEN_KEY = 'tg_music_token';
-export const getToken = () => localStorage.getItem(TOKEN_KEY);
-export const setToken = (t: string) => localStorage.setItem(TOKEN_KEY, t);
+export const getToken   = () => localStorage.getItem(TOKEN_KEY);
+export const setToken   = (t: string) => localStorage.setItem(TOKEN_KEY, t);
 export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
 
+// ── Telegram auth ─────────────────────────────────────────
+export interface TelegramAuthResult {
+  token: string;
+  user: {
+    id:              number;
+    username:        string;
+    profileImageUrl: string | null;
+    telegramId:      string;
+  };
+}
 
-// ── Auth — NOTE: server uses "username", not "email" ──────
+export async function authWithTelegram(initData: string): Promise<TelegramAuthResult> {
+  const res = await fetch(`${BASE_URL}/auth/telegram`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ initData }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? 'Telegram auth failed');
+  }
+  const data: TelegramAuthResult = await res.json();
+  setToken(data.token);
+  return data;
+}
+
+// ── Classic login (fallback for browser testing) ──────────
 export async function login(username: string, password: string): Promise<void> {
   const res = await fetch(`${BASE_URL}/users/login`, {
-    method: 'POST',
+    method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password }),
+    body:    JSON.stringify({ username, password }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
@@ -23,68 +48,63 @@ export async function login(username: string, password: string): Promise<void> {
   setToken(token);
 }
 
-// ── Fetch (tracks are public — no auth needed) ────────────
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`);
-  if (!res.ok) throw new Error(`API error ${res.status}`);
-  return res.json();
-}
-
-
-// ── Raw shape from your trackController ───────────────────
+// ── Tracks (public endpoints) ─────────────────────────────
 interface RawTrack {
-  id: number;
-  title: string;
-  artist: string;
-  imageUrl?: string | null;
-  filename: string;
-  album?: string;
-  genre?: string;
+  id: number; title: string; artist: string;
+  imageUrl?: string | null; filename: string;
+  album?: string; genre?: string; duration?: number;
 }
 
 function normalise(raw: RawTrack) {
   return {
-    id: raw.id,
-    title: raw.title ?? 'Unknown',
-    artist: raw.artist ?? 'Unknown',
-    album: raw.album,
-    genre: raw.genre,
-    coverUrl: raw.imageUrl ?? undefined,           // already full URL from server
-    streamUrl: `${BASE_URL}/tracks/${raw.id}/stream`,  // ← correct endpoint
+    id:        raw.id,
+    title:     raw.title  ?? 'Unknown',
+    artist:    raw.artist ?? 'Unknown',
+    album:     raw.album,
+    genre:     raw.genre,
+    duration:  raw.duration,
+    coverUrl:  raw.imageUrl?.replace(/^http:\/\//, 'https://') ?? undefined,
+    streamUrl: `${BASE_URL}/tracks/${raw.id}/stream`,
   };
 }
 
-export async function getTracks() {
-  const data = await get<RawTrack[]>('/tracks');
-  return data.map(normalise);
+async function get<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`);
+  if (res.status === 401) throw new Error('UNAUTHORIZED');
+  if (!res.ok) throw new Error(`API error ${res.status}`);
+  return res.json();
 }
 
-// Add these to your existing api/tracks.ts
+export async function getTracks() {
+  return (await get<RawTrack[]>('/tracks')).map(normalise);
+}
+
+export async function searchTracks(query: string) {
+  if (!query.trim()) return getTracks();
+  return (await get<RawTrack[]>(`/tracks/search?query=${encodeURIComponent(query.trim())}`)).map(normalise);
+}
+
+// ── Favorites (auth required) ─────────────────────────────
+function authHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    Authorization:  `Bearer ${getToken()}`,
+  };
+}
 
 export async function getFavorites() {
-  const res = await fetch(`${BASE_URL}/favorites/get`, {
-    headers: { Authorization: `Bearer ${getToken()}` }
-  });
-  if (!res.ok) throw new Error('Failed to fetch favorites');
+  const res = await fetch(`${BASE_URL}/favorites/get`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(`${res.status}`);
   return res.json();
 }
 
 export async function toggleFavoriteApi(trackId: number, isCurrentlyFavorite: boolean) {
   const endpoint = isCurrentlyFavorite ? '/favorites/remove' : '/favorites/add';
   const res = await fetch(`${BASE_URL}${endpoint}`, {
-    method: 'POST',
-    headers: { 
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${getToken()}` 
-    },
-    body: JSON.stringify({ trackId })
+    method:  'POST',
+    headers: authHeaders(),
+    body:    JSON.stringify({ trackId }),
   });
-  if (!res.ok) throw new Error('Failed to toggle favorite');
+  if (!res.ok) throw new Error(`${res.status}`);
   return res.json();
-}
-
-export async function searchTracks(query: string) {
-  if (!query.trim()) return getTracks();
-  const data = await get<RawTrack[]>(`/tracks/search?query=${encodeURIComponent(query.trim())}`);
-  return data.map(normalise);
 }
