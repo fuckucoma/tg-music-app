@@ -43,16 +43,35 @@ export default function App() {
     const init = async () => {
       // Already have a token — go straight in
       if (getToken()) {
-        setAuthState('authed');
-        return;
+  const initData = tg?.initData;
+
+  if (initData) {
+    try {
+      const result = await authWithTelegram(initData);
+
+      setDisplayName(result.user.displayName ?? '');
+
+      if (result.user.profileImageUrl) {
+        const safe = result.user.profileImageUrl.replace(/^http:\/\//, 'https://');
+        setHeaderAvatar(safe);
+        localStorage.setItem('tg_music_avatar', safe);
       }
+
+    } catch (e) {
+      console.warn('[Auth] Telegram sync failed:', e);
+    }
+  }
+
+  setAuthState('authed');
+  return;
+}
 
       // Try Telegram initData auth (works inside Mini App)
       const initData = tg?.initData;
       if (initData) {
         try {
           const result = await authWithTelegram(initData);
-          setDisplayName(result.user.username ?? '');
+          setDisplayName(result.user.displayName ?? '');
           if (result.user.profileImageUrl) {
             const safe = result.user.profileImageUrl.replace(/^http:\/\//, 'https://');
             setHeaderAvatar(safe);

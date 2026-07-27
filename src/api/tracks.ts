@@ -12,7 +12,7 @@ export interface TelegramAuthResult {
   token: string;
   user: {
     id:              number;
-    username:        string;
+    displayName:     string;
     profileImageUrl: string | null;
     telegramId:      string;
   };

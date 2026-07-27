@@ -194,7 +194,7 @@ export function ProfilePanel({ open, onClose, onLogout, onAvatarChange, onDispla
 
             {/* Sign out — always visible even if profile failed to load */}
             <button
-              className="w-full h-12 rounded-2xl border border-danger/25 text-danger font-medium text-[15px] flex items-center justify-center gap-2.5 active:bg-danger/10 transition-colors mt-auto"
+              className="w-full h-12 rounded-2xl border border-danger/25 text-danger font-medium text-[15px] flex items-center justify-center gap-2.5 active:bg-danger/10 transition-colors mt-10"
               onClick={onLogout}
             >
               <SignOutIcon />
