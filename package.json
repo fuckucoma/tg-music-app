@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:desktop": "vite --mode desktop --open",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },

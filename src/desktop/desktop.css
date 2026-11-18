@@ -1,0 +1,627 @@
+/* Browser workspace; Telegram keeps its own theme, scroll area and player. */
+.du-shell {
+  --ink: #f3f4f7;
+  --muted-ink: #a3a5b1;
+  --mint: #d5efbd;
+  --line: rgb(220 226 255 / 10%);
+  display: grid;
+  grid-template: minmax(0, 1fr) auto / clamp(190px, 16vw, 242px) minmax(0, 1fr);
+  height: 100%;
+  color: var(--ink);
+  color-scheme: dark;
+  background: radial-gradient(ellipse at 85% -15%, #282838 0, transparent 49%), #101115;
+  font:
+    14px/1.45 Inter,
+    'Segoe UI',
+    system-ui,
+    sans-serif;
+}
+.du-shell button {
+  cursor: pointer;
+}
+.du-shell button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.du-shell :is(button, input, select):focus-visible {
+  outline: 2px solid #c2d3ff;
+  outline-offset: 3px;
+}
+.du-rail {
+  @apply flex min-h-0 flex-col;
+  padding: 26px clamp(13px, 1.45vw, 23px) 20px;
+  border-right: 1px solid var(--line);
+  background: linear-gradient(160deg, #1b1d23b0, #14151bd9 52%, #20232ccc);
+  overflow-y: auto;
+}
+.du-brand {
+  @apply flex items-center gap-3 self-start;
+  padding: 2px 8px;
+  font:
+    750 clamp(25px, 2.1vw, 34px)/1 'Segoe UI',
+    sans-serif;
+  letter-spacing: -0.07em;
+  margin-bottom: clamp(36px, 6vh, 63px);
+}
+.du-brand-dot {
+  color: var(--mint);
+}
+.du-brandmark {
+  display: flex;
+  align-items: center;
+  gap: 2.5px;
+  width: 30px;
+  height: 32px;
+  transform: skew(-10deg);
+}
+.du-brandmark i {
+  width: 5px;
+  border-radius: 5px;
+  background: var(--mint);
+}
+.du-brandmark i:nth-child(1) {
+  height: 12px;
+}
+.du-brandmark i:nth-child(2) {
+  height: 24px;
+}
+.du-brandmark i:nth-child(3) {
+  height: 29px;
+}
+.du-brandmark i:nth-child(4) {
+  height: 17px;
+}
+.du-label {
+  padding: 0 12px;
+  margin-bottom: 10px;
+  color: #9698a7;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.du-second-label {
+  margin-top: 30px;
+}
+.du-navitem {
+  @apply flex w-full items-center gap-3 text-left;
+  min-height: 43px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 6px 12px;
+  color: #b1b2bf;
+  font-weight: 550;
+}
+.du-navitem[aria-current] {
+  border-color: rgb(211 235 197 / 13%);
+  color: var(--mint);
+  background: linear-gradient(105deg, #c3deb91b, #c3deb90b);
+  box-shadow: inset 0 1px #e1ffd808;
+}
+.du-navitem:hover,
+.du-history button:hover {
+  background-color: #ffffff08;
+  color: white;
+}
+.du-navitem small {
+  margin-left: auto;
+  color: #b4b7be;
+}
+.du-history {
+  margin-top: 38px;
+}
+.du-history button {
+  @apply flex w-full items-center gap-2 rounded-lg p-2 text-left;
+}
+.du-history strong {
+  font-size: 12px;
+  font-weight: 550;
+}
+.du-history small {
+  color: var(--muted-ink);
+  font-size: 11px;
+}
+.du-shortcuts {
+  margin-top: auto;
+  padding: 34px 10px 2px;
+  color: #999ba7;
+}
+.du-shortcuts div {
+  @apply flex items-center justify-between;
+  margin-top: 8px;
+  font-size: 11px;
+}
+.du-shell kbd {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 5px;
+  color: #a8aab7;
+  font:
+    10px/1.5 ui-monospace,
+    monospace;
+}
+.du-workspace {
+  @apply flex min-h-0 min-w-0 flex-col;
+}
+.du-top {
+  @apply flex shrink-0 items-center justify-between gap-4;
+  min-height: 72px;
+  padding: 12px clamp(18px, 3.4vw, 64px);
+  border-bottom: 1px solid var(--line);
+  background: rgb(23 24 30 / 58%);
+  backdrop-filter: blur(22px);
+}
+.du-search {
+  @apply flex min-w-0 items-center gap-3;
+  width: min(480px, 64%);
+  height: 40px;
+  padding: 0 12px;
+  color: #afb3c0;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #ffffff06;
+  box-shadow: inset 0 1px 0 #ffffff05;
+}
+.du-search:focus-within {
+  border-color: #aabdd580;
+}
+.du-search input {
+  @apply min-w-0 flex-1 bg-transparent;
+  color: white;
+  font-size: 13px;
+}
+.du-search input:focus-visible {
+  outline: none;
+}
+.du-search input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+.du-search input::placeholder {
+  color: #a1a4b1;
+}
+.du-search svg {
+  flex-shrink: 0;
+}
+.du-login,
+.du-account,
+.du-pill {
+  @apply inline-flex items-center justify-center gap-2;
+}
+.du-login,
+.du-pill {
+  border: 1px solid #ffffff26;
+  border-radius: 999px;
+  padding: 8px 16px;
+  background: #ffffff08;
+  font-size: 13px;
+  font-weight: 600;
+}
+.du-pill:hover,
+.du-login:hover {
+  background: #ffffff15;
+}
+.du-account {
+  min-width: 0;
+  max-width: 32%;
+}
+.du-avatar {
+  @apply grid shrink-0 place-items-center rounded-full;
+  width: 30px;
+  height: 30px;
+  color: #24252f;
+  font-weight: 700;
+  background: linear-gradient(130deg, #d9debb, #d9c6df);
+}
+.du-scroll {
+  @apply min-h-0 flex-1 overflow-y-auto;
+  scrollbar-width: thin;
+  scrollbar-color: #464953 transparent;
+}
+.du-page {
+  max-width: 1540px;
+  margin: auto;
+  padding: 23px clamp(18px, 3.4vw, 64px) 44px;
+}
+.du-heading,
+.du-sectionhead {
+  @apply flex items-center justify-between gap-3;
+}
+.du-heading {
+  margin-bottom: 17px;
+}
+.du-heading h1 {
+  font-size: clamp(27px, 2.3vw, 38px);
+  font-weight: 650;
+  line-height: 1.13;
+  letter-spacing: -0.05em;
+}
+.du-sectionhead {
+  margin: 25px 0 13px;
+}
+.du-sectionhead h2 {
+  font-size: clamp(18px, 1.6vw, 25px);
+  font-weight: 620;
+  letter-spacing: -0.035em;
+}
+.du-count,
+.du-link {
+  color: var(--muted-ink);
+  font-size: 12px;
+}
+.du-link {
+  @apply inline-flex items-center gap-2;
+  padding: 6px;
+}
+.du-link:hover {
+  color: var(--mint);
+}
+.du-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(12px, 1.7vw, 24px);
+}
+.du-card {
+  @apply min-w-0 rounded-xl text-left;
+}
+.du-card-art {
+  @apply relative block overflow-hidden rounded-xl;
+  aspect-ratio: 1.8;
+  background: #262934;
+  box-shadow: 0 8px 21px #07081038;
+}
+.du-card-art::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid #ffffff14;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.du-card-art .du-cover {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+.du-card-art img {
+  transition: transform 0.25s ease;
+}
+.du-card:hover .du-cover img {
+  transform: scale(1.035);
+}
+.du-card strong {
+  margin-top: 9px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.du-card small,
+.du-trackpick small {
+  color: var(--muted-ink);
+  font-size: 12px;
+}
+.du-card-play {
+  @apply absolute grid place-items-center rounded-full;
+  right: 10px;
+  bottom: 10px;
+  width: 28px;
+  height: 28px;
+  background: #16181c9c;
+  border: 1px solid #ffffff4d;
+  backdrop-filter: blur(9px);
+  color: white;
+}
+.du-card:hover .du-card-play {
+  background: var(--mint);
+  color: #152019;
+}
+.du-cover {
+  --cover-bg: linear-gradient(130deg, #735d84, #262d44);
+  display: inline-grid;
+  place-items: center;
+  overflow: hidden;
+  flex-shrink: 0;
+  width: 39px;
+  height: 39px;
+  border-radius: 7px;
+  background: var(--cover-bg);
+}
+.du-cover[data-tone='1'] {
+  --cover-bg: linear-gradient(135deg, #455967, #86747d 55%, #51495a);
+}
+.du-cover[data-tone='2'] {
+  --cover-bg: linear-gradient(135deg, #8f889e, #485470 57%, #353b50);
+}
+.du-cover[data-tone='3'] {
+  --cover-bg: linear-gradient(135deg, #a6ac8f, #67766d 62%, #394648);
+}
+.du-cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.du-mini-disc {
+  width: 62%;
+  max-width: 112px;
+  aspect-ratio: 1;
+  border-radius: 100%;
+  background:
+    repeating-radial-gradient(circle, transparent 0 2px, #eef0fa19 2.5px 3px),
+    conic-gradient(
+      from -35deg,
+      #0f1420,
+      #bbc2c7 52deg,
+      #434b61 88deg,
+      #272a36 170deg,
+      #b5a9be 210deg,
+      #222735 278deg,
+      #0f1420
+    );
+  mask-image: radial-gradient(circle, transparent 0 7%, #000 8%);
+  box-shadow: 3px 5px 8px #0008;
+}
+.du-list {
+  --num: 30px;
+}
+.du-columns,
+.du-trackrow {
+  display: grid;
+  grid-template-columns: var(--num) minmax(0, 1.6fr) minmax(80px, 0.8fr) 54px 34px;
+  gap: 12px;
+  align-items: center;
+  padding: 0 10px;
+}
+.du-columns {
+  min-height: 34px;
+  color: #9195a2;
+  font-size: 11px;
+  border-bottom: 1px solid var(--line);
+}
+.du-columns span:first-child {
+  text-align: center;
+}
+.du-trackrow {
+  min-height: 58px;
+  border-bottom: 1px solid #ffffff08;
+  border-radius: 7px;
+}
+.du-trackrow:hover {
+  background: #ffffff06;
+}
+.du-trackrow.active {
+  background: #d6f3c306;
+}
+.du-trackpick {
+  grid-column: span 2;
+  display: grid;
+  grid-template-columns: var(--num) auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+  text-align: left;
+}
+.du-trackpick strong {
+  font-size: 13px;
+  font-weight: 580;
+}
+.du-num,
+.du-duration,
+.du-album {
+  color: #a4a7b2;
+  font-size: 12px;
+}
+.du-num {
+  text-align: center;
+}
+.du-duration,
+.du-num {
+  font-variant-numeric: tabular-nums;
+}
+.du-trackrow.active :is(.du-trackpick strong, .du-num) {
+  color: var(--mint);
+}
+.du-icon {
+  @apply inline-grid shrink-0 place-items-center rounded-full;
+  min-width: 30px;
+  height: 30px;
+  color: #a9adba;
+}
+.du-icon:hover {
+  color: white;
+  background: #ffffff0d;
+}
+.du-icon.du-liked {
+  color: #ecb4ce;
+}
+.du-liked svg {
+  fill: currentColor;
+}
+.du-sort {
+  @apply mb-3 inline-flex items-center gap-2;
+  font-size: 12px;
+  color: var(--muted-ink);
+}
+.du-sort select,
+.du-input {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #21232b;
+  color: var(--ink);
+  padding: 7px 10px;
+}
+.du-state {
+  @apply flex flex-col items-center justify-center gap-2 rounded-2xl text-center;
+  padding: 32px 15px;
+  min-height: 155px;
+  color: var(--muted-ink);
+  border: 1px dashed var(--line);
+  background: #ffffff03;
+}
+.du-state h2 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.du-state .du-pill {
+  margin-top: 8px;
+  color: var(--ink);
+}
+.du-dialog {
+  margin: auto;
+  width: min(430px, calc(100vw - 32px));
+  border: 1px solid #cbd5ff36;
+  border-radius: 20px;
+  background: linear-gradient(145deg, #2a2d39f5, #191b24fa);
+  color: var(--ink);
+  box-shadow: 0 30px 95px #000a;
+}
+.du-dialog::backdrop {
+  background: #080911a8;
+  backdrop-filter: blur(8px);
+}
+.du-input,
+.du-primary {
+  padding: 11px 13px;
+}
+.du-primary {
+  border-radius: 10px;
+  font-weight: 650;
+  background: var(--mint);
+  color: #18201a;
+}
+.du-toast {
+  @apply fixed flex items-center gap-3 rounded-xl;
+  right: 20px;
+  bottom: 110px;
+  z-index: 7;
+  padding: 8px 12px;
+  max-width: calc(100vw - 40px);
+  background: #363440;
+  border: 1px solid #ffffff22;
+}
+.du-shell .du-now-cover {
+  width: 48px;
+  height: 48px;
+}
+@media (max-width: 980px) {
+  .du-shell {
+    grid-template-columns: 67px minmax(0, 1fr);
+  }
+  .du-rail {
+    padding: 24px 8px;
+  }
+  .du-brand {
+    align-self: center;
+    padding: 0;
+  }
+  .du-brand > span:last-child,
+  .du-navitem span,
+  .du-navitem small,
+  .du-label,
+  .du-shortcuts,
+  .du-history {
+    display: none;
+  }
+  .du-navitem {
+    justify-content: center;
+    padding: 0;
+  }
+}
+@media (max-width: 650px) {
+  .du-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+  .du-rail {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 6px 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    overflow: visible;
+  }
+  .du-brand {
+    margin: 0;
+    font-size: 23px;
+    gap: 6px;
+  }
+  .du-brandmark {
+    transform: scale(0.8) skew(-10deg);
+    width: 24px;
+  }
+  .du-brand > span:last-child {
+    display: inline;
+  }
+  .du-rail nav {
+    display: flex;
+  }
+  .du-navitem {
+    width: 37px;
+    min-height: 36px;
+  }
+  .du-top {
+    min-height: 58px;
+    padding: 8px 14px;
+    gap: 10px;
+  }
+  .du-search {
+    flex: 1;
+    width: auto;
+    gap: 8px;
+  }
+  .du-search kbd,
+  .du-account strong {
+    display: none;
+  }
+  .du-login {
+    padding: 8px 12px;
+  }
+  .du-page {
+    padding: 15px 14px 30px;
+  }
+  .du-cards {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(135px, 44%);
+    grid-template-columns: none;
+    overflow-x: auto;
+    padding-bottom: 5px;
+    scroll-snap-type: x proximity;
+  }
+  .du-card {
+    scroll-snap-align: start;
+  }
+  .du-columns,
+  .du-trackrow {
+    grid-template-columns: minmax(0, 1fr) 38px 30px;
+    padding: 0 3px;
+    gap: 7px;
+  }
+  .du-trackpick {
+    grid-column: 1;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 9px;
+  }
+  .du-num,
+  .du-columns span:first-child,
+  .du-columns span:nth-child(3),
+  .du-album {
+    display: none;
+  }
+  .du-shell .du-now-cover {
+    width: 34px;
+    height: 34px;
+  }
+  .du-playback-error {
+    white-space: normal;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .du-shell *,
+  .du-shell *::before,
+  .du-shell *::after {
+    transition-duration: 0s !important;
+    animation-duration: 0s !important;
+  }
+}
