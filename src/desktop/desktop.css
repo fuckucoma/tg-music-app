@@ -266,8 +266,26 @@
 .du-card-art {
   @apply relative block overflow-hidden rounded-xl;
   aspect-ratio: 1.8;
-  background: #262934;
+  --card-light: #a894b6;
+  --card-shadow: #453649;
+  --disc-tilt: -24deg;
+  background: radial-gradient(ellipse at 30% -30%, var(--card-light), var(--card-shadow) 74%);
   box-shadow: 0 8px 21px #07081038;
+}
+.du-card-art[data-palette='1'] {
+  --card-light: #bdcfa7;
+  --card-shadow: #394b41;
+  --disc-tilt: 20deg;
+}
+.du-card-art[data-palette='2'] {
+  --card-light: #96b7d5;
+  --card-shadow: #304660;
+  --disc-tilt: -16deg;
+}
+.du-card-art[data-palette='3'] {
+  --card-light: #e0b1a0;
+  --card-shadow: #644652;
+  --disc-tilt: 28deg;
 }
 .du-card-art::after {
   content: '';
@@ -277,16 +295,30 @@
   border-radius: inherit;
   pointer-events: none;
 }
-.du-card-art .du-cover {
-  width: 100%;
-  height: 100%;
-  border-radius: inherit;
-}
-.du-card-art img {
+.du-card-disc {
+  position: absolute;
+  left: 50%;
+  top: 53%;
+  width: 58%;
+  aspect-ratio: 1;
+  border: 1px solid #ffffff50;
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      circle,
+      var(--card-shadow) 0 7%,
+      #eee9efb0 7% 10%,
+      var(--card-light) 10% 21%,
+      transparent 21%
+    ),
+    repeating-radial-gradient(circle, transparent 0 3px, #ffffff20 4px 5px),
+    conic-gradient(from 42deg, #212334, var(--card-light), #212334, var(--card-light), #212334);
+  box-shadow: 0 14px 23px #1410197a;
+  transform: translate(-50%, -50%) rotate(var(--disc-tilt)) scaleY(0.73);
   transition: transform 0.25s ease;
 }
-.du-card:hover .du-cover img {
-  transform: scale(1.035);
+.du-card:hover .du-card-disc {
+  transform: translate(-50%, -52%) rotate(var(--disc-tilt)) scaleY(0.79);
 }
 .du-card strong {
   margin-top: 9px;
@@ -323,6 +355,7 @@
   height: 39px;
   border-radius: 7px;
   background: var(--cover-bg);
+  position: relative;
 }
 .du-cover[data-tone='1'] {
   --cover-bg: linear-gradient(135deg, #455967, #86747d 55%, #51495a);
@@ -334,6 +367,8 @@
   --cover-bg: linear-gradient(135deg, #a6ac8f, #67766d 62%, #394648);
 }
 .du-cover img {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;

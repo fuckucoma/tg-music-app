@@ -146,10 +146,9 @@ export function Cover({ track, className = '' }: { track?: Track | null; classNa
   const url = track?.coverUrl;
   return (
     <span className={'du-cover ' + className} data-tone={(track?.id ?? 0) % 4}>
-      {url && url !== failed ? (
+      <span aria-hidden="true" className="du-mini-disc" />
+      {url && url !== failed && (
         <img key={url} src={url} loading="lazy" onError={() => setFailed(url)} alt="" />
-      ) : (
-        <span aria-hidden="true" className="du-mini-disc" />
       )}
     </span>
   );

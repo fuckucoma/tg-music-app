@@ -11,7 +11,7 @@ export default defineConfig(({ mode, command }) => {
     plugins: [react()],
     define: localWeb ? { 'import.meta.env.VITE_API_BASE_URL': JSON.stringify('/backend') } : {},
     server: {
-      host: 'localhost',
+      host: localWeb ? '127.0.0.1' : 'localhost',
       port: localWeb ? 5180 : 5173,
       strictPort: true,
       proxy: localWeb

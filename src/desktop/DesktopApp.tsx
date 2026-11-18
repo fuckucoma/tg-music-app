@@ -27,6 +27,19 @@ function countTracks(count: number) {
   return count + ' ' + (forms[plural.select(count)] ?? 'треков');
 }
 
+function recentReleases(tracks: Track[]) {
+  const artists = new Set<string>();
+  const releases: Track[] = [];
+  for (const track of tracks) {
+    const artist = track.artist.trim().toLocaleLowerCase();
+    if (artists.has(artist)) continue;
+    releases.push(track);
+    artists.add(artist);
+    if (releases.length === 4) break;
+  }
+  return releases;
+}
+
 function BrandMark() {
   return (
     <span className="du-brandmark" aria-hidden="true">
@@ -49,6 +62,7 @@ export default function DesktopApp() {
   const scroller = useRef<HTMLElement>(null);
 
   const newest = useMemo(() => [...library.tracks].sort((a, b) => b.id - a.id), [library.tracks]);
+  const fresh = useMemo(() => recentReleases(newest), [newest]);
   const spotlight = newest.length ? newest[focusIndex % newest.length] : null;
   const isPlaying = player.status === 'playing';
   const term = query.trim().toLocaleLowerCase();
@@ -134,9 +148,10 @@ export default function DesktopApp() {
   const error = inQueue ? '' : inFavorites ? library.favoritesError : library.error;
   const title = term ? 'Результаты поиска' : pages[page];
   const showLogin = inFavorites && !library.authed;
-  const fresh = newest.slice(0, 4);
-  // After recent releases, surface more of the collection in the overview.
-  const rows = overview && newest.length > 4 ? tracks.slice(4, 12) : tracks;
+  const rows =
+    overview && tracks.length > fresh.length
+      ? tracks.filter((track) => !fresh.some((release) => release.id === track.id)).slice(0, 8)
+      : tracks;
   return (
     <div className="du-shell">
       <aside className="du-rail">
@@ -248,21 +263,21 @@ export default function DesktopApp() {
                 {fresh.length > 0 && (
                   <section className="du-new" aria-labelledby="du-releases-title">
                     <div className="du-sectionhead">
-                      <h2 id="du-releases-title">Новые треки</h2>
+                      <h2 id="du-releases-title">Недавние релизы</h2>
                       <button className="du-link" onClick={() => go('catalog')}>
                         В каталог <Icon name="arrow" size={15} />
                       </button>
                     </div>
                     <div className="du-cards">
-                      {fresh.map((track) => (
+                      {fresh.map((track, index) => (
                         <button
                           key={track.id}
                           className="du-card"
                           onClick={() => player.play(track, newest)}
                           title={track.artist + ' — ' + track.title}
                         >
-                          <span className="du-card-art">
-                            <Cover track={track} />
+                          <span className="du-card-art" data-palette={index}>
+                            <span aria-hidden="true" className="du-card-disc" />
                             <span className="du-card-play">
                               <Icon
                                 name={current?.id === track.id && isPlaying ? 'pause' : 'play'}

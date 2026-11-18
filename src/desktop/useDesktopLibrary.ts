@@ -43,15 +43,26 @@ export function useDesktopLibrary() {
   const openAuth = useCallback(() => setAuthOpen(true), []);
   const closeAuth = useCallback(() => setAuthOpen(false), []);
   const clearNotice = useCallback(() => setNotice(''), []);
-  const expire = useCallback((token: string | null) => {
-    if (!token || getToken() !== token) return;
+  const resetSession = useCallback(() => {
+    favoritesRequestRef.current++;
     clearToken();
     setAuthed(false);
     setFavorites([]);
+    setFavoritesLoading(false);
+    setFavoritesError('');
     setUserName('');
-    setAuthOpen(true);
-    setNotice('Сессия истекла. Войдите снова.');
+    pendingRef.current.clear();
+    setPendingIds(new Set());
   }, []);
+  const expire = useCallback(
+    (token: string | null) => {
+      if (!token || getToken() !== token) return;
+      resetSession();
+      setAuthOpen(true);
+      setNotice('Сессия истекла. Войдите снова.');
+    },
+    [resetSession],
+  );
   const reload = useCallback(async () => {
     const request = ++requestRef.current;
     setLoading(true);
@@ -80,11 +91,11 @@ export function useDesktopLibrary() {
       if (getToken() === token && request === favoritesRequestRef.current)
         setFavorites((result.favorites || []).map(toTrack));
     } catch (e) {
-      if (getToken() !== token) return;
+      if (getToken() !== token || request !== favoritesRequestRef.current) return;
       if ((e as Error).message === '401') expire(token);
       else setFavoritesError('Не удалось загрузить избранное.');
     } finally {
-      if (getToken() === token) setFavoritesLoading(false);
+      if (getToken() === token && request === favoritesRequestRef.current) setFavoritesLoading(false);
     }
   }, [expire]);
   useEffect(() => {
@@ -125,16 +136,8 @@ export function useDesktopLibrary() {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       }).catch(() => {});
-    favoritesRequestRef.current++;
-    clearToken();
-    setAuthed(false);
-    setFavorites([]);
-    setFavoritesLoading(false);
-    setFavoritesError('');
-    setUserName('');
-    pendingRef.current = new Set();
-    setPendingIds(new Set());
-  }, []);
+    resetSession();
+  }, [resetSession]);
   const toggleFavorite = useCallback(
     async (track: Track) => {
       const token = getToken();
