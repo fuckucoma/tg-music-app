@@ -1,98 +1,25 @@
 import { useState } from 'react';
-import { login } from '../api/tracks';
-import { RegisterScreen } from './RegisterScreen';
+import { CredentialsForm, type AcceptCredentials, type CredentialMode } from '../features/auth/CredentialsForm';
 
-interface Props { onSuccess: () => void; }
-
-export function LoginScreen({ onSuccess }: Props) {
-  const [showRegister, setShowRegister] = useState(false);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  if (showRegister) {
-    return <RegisterScreen onSuccess={onSuccess} onBack={() => setShowRegister(false)} />;
-  }
-
-  const handleSubmit = async () => {
-    if (!username || !password) return;
-    setLoading(true);
-    setError('');
-    try {
-      await login(username, password);
-      onSuccess();
-    } catch (e: any) {
-      setError(e.message ?? 'Login failed');
-    } finally {
-      setLoading(false);
-    }
-  };
-
+export function LoginScreen({ onCredentials }: { onCredentials: AcceptCredentials }) {
+  const [mode, setMode] = useState<CredentialMode>('login');
+  const signingUp = mode === 'register';
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-b from-bg to-surface px-6">
-      <div className="w-full max-w-sm flex flex-col gap-5 bg-surface/70 backdrop-blur-xl border border-border rounded-3xl p-6 shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
-
-        {/* Logo */}
+    <div className="h-full flex flex-col items-center overflow-y-auto bg-gradient-to-b from-bg to-surface px-6 py-4">
+      <div className="my-auto w-full max-w-sm shrink-0 flex flex-col gap-5 bg-surface/70 backdrop-blur-xl border border-border rounded-3xl p-6 shadow-[0_8px_40px_rgba(0,0,0,0.12)]">
         <div className="text-center">
-          <div className="relative mb-4 flex justify-center">
-            <div className="absolute w-20 h-20 bg-accent/20 blur-3xl rounded-full" />
+          <div className="relative mb-4 flex justify-center" aria-hidden="true">
+            {!signingUp && <div className="absolute w-20 h-20 bg-accent/20 blur-3xl rounded-full" />}
             <div className="relative text-6xl select-none">♪</div>
+          </div>
+          <h1 className="text-3xl font-semibold text-text tracking-tight">
+            {signingUp ? 'Create account' : 'Welcome back'}
+          </h1>
+          <p className="text-muted text-sm mt-1">
+            {signingUp ? 'Pick a username and password' : 'Sign in to your account'}
+          </p>
         </div>
-
-          <h1 className="text-3xl font-semibold text-text tracking-tight">Welcome back</h1>
-          <p className="text-muted text-sm mt-1">Sign in to your account</p>
-          
-        </div>
-
-        {/* Fields */}
-        <div className="flex flex-col gap-3">
-          <input
-            className="w-full h-12 rounded-2xl bg-surface border border-[var(--border)] px-4 text-text placeholder:text-muted text-[15px] outline-none focus:border-accent transition-colors"
-            type="text"
-            placeholder="Username"
-            value={username}
-            onChange={e => setUsername(e.target.value)}
-            autoComplete="username"
-            autoCapitalize="none"
-            spellCheck={false}
-          />
-          <input
-            className="w-full h-12 rounded-2xl bg-surface border border-[var(--border)] px-4 text-text placeholder:text-muted text-[15px] outline-none focus:border-accent transition-colors"
-            type="password"
-            placeholder="Password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-            autoComplete="current-password"
-          />
-        </div>
-
-        {error && (
-          <p className="text-danger text-sm text-center -mt-2">{error}</p>
-        )}
-
-        {/* Submit */}
-        <button
-          className="w-full h-12 hover:opacity-80 duration-200 rounded-2xl bg-accent text-accent-fg font-semibold text-[15px] transition-opacity disabled:opacity-40 active:opacity-75"
-          onClick={handleSubmit}
-          disabled={loading || !username || !password}
-        >
-          {loading
-            ? <span className="inline-block w-5 h-5 border-2 border-accent-fg/30 border-t-accent-fg rounded-full animate-spin-slow" />
-            : 'Sign in'
-          }
-        </button>
-
-        {/* Switch */}
-        <button
-          className="text-sm text-muted text-center hover:opacity-80 duration-200 transition-opacity"
-          onClick={() => setShowRegister(true)}
-        >
-          No account?{' '}
-          <span className="text-accent font-semibold">Create one</span>
-        </button>
-
+        <CredentialsForm variant="mobile" mode={mode} onModeChange={setMode} onCredentials={onCredentials} />
       </div>
     </div>
   );

@@ -1,10 +1,10 @@
 import { useRef, type CSSProperties } from 'react';
-import { usePlayer } from '../hooks/usePlayer';
+import type { Player } from '../features/player/usePlayer';
 import { Cover, Icon, IconButton, time } from './Controls';
 import './playback.css';
 
 type Props = {
-  player: ReturnType<typeof usePlayer>;
+  player: Player;
   onQueue: () => void;
   queueOpen: boolean;
   onStart: () => void;

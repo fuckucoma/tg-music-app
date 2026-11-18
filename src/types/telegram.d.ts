@@ -20,6 +20,8 @@ interface TelegramWebAppThemeParams {
 interface TelegramWebApp {
   ready(): void;
   expand(): void;
+  onEvent?(event: 'themeChanged', handler: () => void): void;
+  offEvent?(event: 'themeChanged', handler: () => void): void;
   close(): void;
   colorScheme: 'light' | 'dark';
   themeParams: TelegramWebAppThemeParams;

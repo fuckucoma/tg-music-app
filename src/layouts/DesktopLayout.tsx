@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { usePlayer } from '../hooks/usePlayer';
+import { usePlayer } from '../features/player/PlayerProvider';
 import type { Track } from '../types/track';
-import { AccountDialog } from './AccountDialog';
-import { Cover, Icon, IconButton, time, type IconName } from './Controls';
-import FeaturedRelease from './FeaturedRelease';
-import { PlaybackBar } from './PlaybackBar';
-import { useDesktopLibrary } from './useDesktopLibrary';
-import './desktop.css';
+import { AccountDialog } from '../features/auth/AccountDialog';
+import { Icon, IconButton, type IconName } from '../components/Controls';
+import { TrackArtwork } from '../components/TrackArtwork';
+import { SearchBar } from '../components/SearchBar';
+import { TrackRow } from '../components/TrackRow';
+import FeaturedRelease from '../components/FeaturedRelease';
+import { PlaybackBar } from '../desktop/PlaybackBar';
+import type { LayoutProps } from './AppShell';
+import '../desktop/desktop.css';
 
 const pages = {
   home: 'Обзор',
@@ -51,11 +54,13 @@ function BrandMark() {
   );
 }
 
-export default function DesktopApp() {
-  const library = useDesktopLibrary();
+export default function DesktopLayout({ auth, favorites, library, search: catalogSearch, hapticTap }: LayoutProps) {
   const player = usePlayer();
   const [page, setPage] = useState<Page>('home');
-  const [query, setQuery] = useState('');
+  const { query, setQuery } = catalogSearch;
+  const authed = auth.status === 'authenticated';
+  const userName = auth.profile?.displayName || auth.profile?.telegramName || auth.profile?.username || '';
+  const notice = auth.notice || favorites.notice;
   const [focusIndex, setFocusIndex] = useState(0);
   const [sort, setSort] = useState('newest');
   const search = useRef<HTMLInputElement>(null);
@@ -65,24 +70,21 @@ export default function DesktopApp() {
   const fresh = useMemo(() => recentReleases(newest), [newest]);
   const spotlight = newest.length ? newest[focusIndex % newest.length] : null;
   const isPlaying = player.status === 'playing';
-  const term = query.trim().toLocaleLowerCase();
+  const term = query.trim();
   const overview = page === 'home' && !term;
   const inFavorites = page === 'favorites' && !term;
   const inQueue = page === 'queue' && !term;
   const current = player.currentTrack;
   const tracks = useMemo(() => {
     if (inQueue) return player.queue;
-    let list = inFavorites ? library.favorites : newest;
-    if (term)
-      list = list.filter((t) =>
-        [t.title, t.artist, t.album].some((value) => value?.toLocaleLowerCase().includes(term)),
-      );
+    const list = inFavorites ? favorites.favorites : term ? catalogSearch.tracks : newest;
     if (!overview && sort === 'title')
       return [...list].sort((a, b) => a.title.localeCompare(b.title, 'ru'));
     if (!overview && sort === 'artist')
       return [...list].sort((a, b) => a.artist.localeCompare(b.artist, 'ru'));
+    if (term) return [...list].sort((a, b) => b.id - a.id);
     return list;
-  }, [newest, library.favorites, player.queue, term, inQueue, inFavorites, sort, overview]);
+  }, [newest, favorites.favorites, catalogSearch.tracks, player.queue, term, inQueue, inFavorites, sort, overview]);
   const [historyIds, setHistoryIds] = useState<number[]>([]);
   useEffect(() => {
     if (current && isPlaying)
@@ -103,7 +105,7 @@ export default function DesktopApp() {
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
-      if (library.authOpen || event.isComposing) return;
+      if (auth.authOpen || event.isComposing) return;
       const el = event.target as HTMLElement;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
@@ -121,12 +123,7 @@ export default function DesktopApp() {
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [library.authOpen, current, player.play, tracks]);
-
-  useEffect(() => {
-    document.title = 'UNDERLAB — Музыка';
-    document.documentElement.lang = 'ru';
-  }, []);
+  }, [auth.authOpen, current, player.play, tracks]);
 
   function navItem(key: Page) {
     return (
@@ -140,14 +137,15 @@ export default function DesktopApp() {
       >
         <Icon name={icons[key]} />
         <span>{pages[key]}</span>
-        {key === 'favorites' && library.authed && <small>{library.favorites.length}</small>}
+        {key === 'favorites' && authed && <small>{favorites.favorites.length}</small>}
       </button>
     );
   }
-  const loading = inQueue ? false : inFavorites ? library.favoritesLoading : library.loading;
-  const error = inQueue ? '' : inFavorites ? library.favoritesError : library.error;
+  const loading = inQueue ? false : inFavorites ? favorites.favoritesLoading : term ? catalogSearch.loading : library.loading;
+  const error = inQueue ? '' : inFavorites ? favorites.favoritesError : term ? catalogSearch.error : library.error;
+  const retry = inFavorites ? favorites.reloadFavorites : term ? catalogSearch.retry : library.reload;
   const title = term ? 'Результаты поиска' : pages[page];
-  const showLogin = inFavorites && !library.authed;
+  const showLogin = inFavorites && !authed;
   const rows =
     overview && tracks.length > fresh.length
       ? tracks.filter((track) => !fresh.some((release) => release.id === track.id)).slice(0, 8)
@@ -174,7 +172,7 @@ export default function DesktopApp() {
             <h2 className="du-label">Недавно слушали</h2>
             {history.map((track) => (
               <button key={track.id} title={track.title} onClick={() => player.play(track, newest)}>
-                <Cover track={track} />
+                <TrackArtwork track={track} />
                 <span className="min-w-0">
                   <strong className="block truncate">{track.title}</strong>
                   <small className="block truncate">{track.artist}</small>
@@ -196,47 +194,30 @@ export default function DesktopApp() {
       </aside>
       <div className="du-workspace">
         <header className="du-top">
-          <div className="du-search">
-            <Icon name="search" size={18} />
-            <input
-              ref={search}
-              type="search"
-              value={query}
-              aria-label="Поиск музыки"
-              placeholder="Трек, исполнитель или альбом"
-              onChange={(event) => {
-                setQuery(event.target.value);
-                scroller.current?.scrollTo({ top: 0 });
-              }}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  setQuery('');
-                  search.current?.blur();
-                }
-              }}
-            />
-            {query ? (
-              <IconButton
-                icon="close"
-                size={15}
-                label="Очистить поиск"
-                onClick={() => {
-                  setQuery('');
-                  search.current?.focus();
-                }}
-              />
-            ) : (
-              <kbd>Ctrl K</kbd>
-            )}
-          </div>
-          {library.authed ? (
+          <SearchBar
+            variant="desktop"
+            value={query}
+            loading={catalogSearch.loading}
+            inputRef={search}
+            onChange={(value) => {
+              setQuery(value);
+              scroller.current?.scrollTo({ top: 0 });
+            }}
+          />
+          {authed ? (
             <div className="du-account">
-              <span className="du-avatar">{(library.userName || 'Я').slice(0, 1)}</span>
-              <strong className="truncate">{library.userName || 'Аккаунт'}</strong>
-              <IconButton icon="logout" size={17} label="Выйти" onClick={library.logout} />
+              <button className="flex min-w-0 items-center gap-2" type="button" onClick={auth.openAuth} aria-label="Открыть профиль">
+                <span className="du-avatar overflow-hidden">
+                  {auth.profile?.profileImageUrl
+                    ? <img src={auth.profile.profileImageUrl} alt="" className="h-full w-full object-cover" />
+                    : (userName || 'Я').slice(0, 1)}
+                </span>
+                <strong className="truncate">{userName || 'Аккаунт'}</strong>
+              </button>
+              <IconButton icon="logout" size={17} label="Выйти" onClick={auth.logout} />
             </div>
           ) : (
-            <button type="button" className="du-login" onClick={library.openAuth}>
+            <button type="button" className="du-login" onClick={auth.openAuth} disabled={auth.status === 'checking'}>
               <Icon name="user" size={16} />
               Войти
             </button>
@@ -315,7 +296,7 @@ export default function DesktopApp() {
                 title="Ваши любимые треки"
                 text="Войдите, чтобы открыть коллекцию и сохранять музыку."
                 action="Войти"
-                onAction={library.openAuth}
+                onAction={auth.openAuth}
               />
             ) : loading ? (
               <div className="du-state" role="status">
@@ -326,7 +307,7 @@ export default function DesktopApp() {
                 icon="library"
                 title={error}
                 action="Повторить"
-                onAction={inFavorites ? library.reloadFavorites : library.reload}
+                onAction={retry}
               />
             ) : rows.length === 0 ? (
               <StateMessage
@@ -361,53 +342,26 @@ export default function DesktopApp() {
                   <Icon name="clock" size={15} />
                   <span />
                 </div>
-                {rows.map((track, i) => {
-                  const active = track.id === current?.id;
-                  const favorite = library.favoriteIds.has(track.id);
-                  return (
-                    <div
-                      key={track.id}
-                      role="listitem"
-                      className={'du-trackrow' + (active ? ' active' : '')}
-                    >
-                      <button
-                        className="du-trackpick"
-                        onClick={() =>
-                          player.play(track, inQueue ? player.queue : overview ? newest : tracks)
-                        }
-                        aria-label={
-                          (active && isPlaying ? 'Приостановить ' : 'Слушать ') +
-                          track.title +
-                          ' — ' +
-                          track.artist
-                        }
-                      >
-                        <span className="du-num">
-                          {active && isPlaying ? <b>♫</b> : String(i + 1).padStart(2, '0')}
-                        </span>
-                        <Cover track={track} />
-                        <span className="min-w-0">
-                          <strong className="block truncate">{track.title}</strong>
-                          <small className="block truncate">{track.artist}</small>
-                        </span>
-                      </button>
-                      <span className="du-album truncate">{track.album || '—'}</span>
-                      <span className="du-duration">{track.duration ? time(track.duration) : '—'}</span>
-                      <IconButton
-                        icon="heart"
-                        size={18}
-                        className={favorite ? 'du-liked' : ''}
-                        aria-pressed={favorite}
-                        disabled={
-                          library.pendingIds.has(track.id) ||
-                          (library.authed && library.favoritesLoading)
-                        }
-                        label={(favorite ? 'Убрать из избранного: ' : 'В избранное: ') + track.title}
-                        onClick={() => library.toggleFavorite(track)}
-                      />
-                    </div>
-                  );
-                })}
+                {rows.map((track, index) => (
+                  <TrackRow
+                    key={track.id}
+                    variant="desktop"
+                    index={index}
+                    track={track}
+                    isActive={track.id === current?.id}
+                    status={track.id === current?.id ? player.status : 'idle'}
+                    isFavorite={favorites.favoriteIds.has(track.id)}
+                    favoritePending={favorites.pendingIds.has(track.id) || !favorites.canToggle}
+                    onPlay={() => {
+                      hapticTap();
+                      player.play(track, inQueue ? player.queue : overview ? newest : tracks);
+                    }}
+                    onToggleFavorite={() => {
+                      hapticTap();
+                      void favorites.toggleFavorite(track);
+                    }}
+                  />
+                ))}
               </div>
             )}
           </div>
@@ -420,16 +374,25 @@ export default function DesktopApp() {
         canStart={tracks.length > 0}
         onStart={start}
       />
-      {library.notice && (
+      {(notice || auth.status === 'unavailable') && (
         <div className="du-toast" role="status">
-          {library.notice}
-          <IconButton icon="close" label="Скрыть сообщение" onClick={library.clearNotice} />
+          {notice || 'Не удалось проверить сессию.'}
+          {auth.status === 'unavailable' && <button onClick={auth.retry}>Повторить</button>}
+          {notice && (
+            <IconButton icon="close" label="Скрыть сообщение" onClick={() => {
+              auth.clearNotice();
+              favorites.clearNotice();
+            }} />
+          )}
         </div>
       )}
       <AccountDialog
-        open={library.authOpen}
-        onClose={library.closeAuth}
-        onSuccess={library.loginSuccess}
+        open={auth.authOpen}
+        profile={auth.profile}
+        onClose={auth.closeAuth}
+        onLogout={auth.logout}
+        onUploadAvatar={auth.uploadAvatar}
+        onCredentials={auth.acceptCredentials}
       />
     </div>
   );

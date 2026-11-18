@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { Track } from '../types/track';
 import type { PlayerStatus } from '../types/track';
-import type { RepeatMode } from '../hooks/usePlayer';
+import type { RepeatMode } from '../features/player/PlayerStore';
 
 interface Props {
   track: Track; status: PlayerStatus; progress: number; duration: number; volume: number;

@@ -1,4 +1,4 @@
-/* Browser workspace; Telegram keeps its own theme, scroll area and player. */
+/* Wide layout and account dialog colors. */
 .du-shell {
   --ink: #f3f4f7;
   --muted-ink: #a3a5b1;
@@ -502,6 +502,11 @@
   color: var(--ink);
 }
 .du-dialog {
+  --ink: #f3f4f7;
+  --muted-ink: #a3a5b1;
+  --mint: #d5efbd;
+  --line: rgb(220 226 255 / 10%);
+  color-scheme: dark;
   margin: auto;
   width: min(430px, calc(100vw - 32px));
   border: 1px solid #cbd5ff36;
