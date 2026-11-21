@@ -11,6 +11,7 @@ const activeHeartbeatInterval = 6_500;
 const passiveHeartbeatInterval = 15_000;
 const pollingHeartbeatInterval = 4_000;
 const recoveryHeartbeatInterval = 2_000;
+const requestTimeout = 12_000;
 const deadlineMargin = 750;
 const queueLimit = 300;
 const nextRepeat: Record<RepeatMode, RepeatMode> = { none: 'all', all: 'one', one: 'none' };
@@ -394,7 +395,7 @@ export class PlaybackSession {
     if (!this.running) return;
     const controller = new AbortController();
     const cancel = () => controller.abort();
-    const timeout = window.setTimeout(cancel, 6_000);
+    const timeout = window.setTimeout(cancel, requestTimeout);
     this.abort.signal.addEventListener('abort', cancel, { once: true });
     const startedAt = performance.now();
     const generation = this.generation;

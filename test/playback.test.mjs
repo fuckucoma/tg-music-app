@@ -162,7 +162,7 @@ test('AudioEngine plays only a prepared source and an authorized playback attemp
   assert.equal(audible.size, 1);
 });
 
-function server(t, audible) {
+function server(t, audible, delayResponse) {
   const devices = new Map();
   const streams = new Set();
   const text = new TextEncoder();
@@ -193,6 +193,7 @@ function server(t, audible) {
       return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
     }
 
+    if (delayResponse) await delayResponse(url.pathname, parameters.signal);
     const body = parameters.body ? JSON.parse(parameters.body) : {};
     if (url.pathname === '/playback/devices') {
       devices.set(body.deviceId, { id: body.deviceId, name: body.name, online: true, platform: body.platform });
@@ -227,13 +228,34 @@ function server(t, audible) {
   return { session, status, emit, setReachable: (value) => { reachable = value; } };
 }
 
-async function eventually(condition, label) {
-  for (let tries = 0; tries < 100; tries++) {
+async function eventually(condition, label, timeout = 1_000) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
     if (condition()) return;
     await setTimeout(10);
   }
   assert.fail(label);
 }
+
+test('Play can wait for a Render response that takes more than six seconds', async (t) => {
+  const { audible } = browser(t);
+  const api = server(t, audible, async (path, signal) => {
+    if (path === '/playback/command') await setTimeout(6_500, undefined, { signal });
+  });
+  const device = { deviceId: 'desktop', deviceKey: 'fixture-key' };
+  const player = new PlaybackSession('fixture', device, 'Desktop', 'browser', 1, noop);
+  player.rememberCatalog([track]);
+  player.start();
+  try {
+    await eventually(() => player.getView().devices.length === 1, 'device registered');
+    player.play(track, [track]);
+    await eventually(() => audible.size === 1, 'the delayed command granted playback', 9_000);
+    assert.equal(api.session.activeDeviceId, device.deviceId);
+    assert.equal(player.getView().notice, null);
+  } finally {
+    player.dispose(false);
+  }
+});
 
 test('two playback controllers hand off one engine, recover within a lease, and fail silent at expiry', async (t) => {
   const { host, document, audible, playCalls, blockNextPlay } = browser(t);
