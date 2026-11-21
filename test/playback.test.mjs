@@ -16,7 +16,7 @@ const [bundle] = await build({
   },
 });
 const code = bundle.output.find((file) => file.type === 'chunk').code;
-const { AudioEngine, claimPlaybackIdentity, PlaybackSession } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+const { AudioEngine, claimPlaybackIdentity, PlaybackSession, getTracksByIds } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
 
 function setGlobal(t, name, value) {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
@@ -160,6 +160,24 @@ function browser(t) {
 
 const track = { id: 8, title: 'The test track', artist: 'Artist', duration: 120, streamUrl: `${fixtureUrl}/audio/8` };
 const noop = () => {};
+
+test('public storage media starts from the catalog URL and legacy media keeps the API route', async (t) => {
+  const { playCalls } = browser(t);
+  const publicUrl = 'https://storage.example.test/storage/v1/object/public/tracks/test.mp3';
+  setGlobal(t, 'fetch', async () => Response.json([
+    { id: 1, streamUrl: publicUrl },
+    { id: 2, streamUrl: null },
+    { id: 3, streamUrl: 'javascript:alert(1)' },
+    { id: 4 },
+  ]));
+  const tracks = await getTracksByIds([1, 2, 3, 4], new AbortController().signal);
+  const engine = new AudioEngine({
+    onStatus: noop, onProgress: noop, onDuration: noop, onEnded: noop, onNext: noop, onPrevious: noop,
+  }, 1);
+  for (const item of tracks) engine.load(item);
+  assert.deepEqual(playCalls, [publicUrl, ...[2, 3, 4].map(id => `${fixtureUrl}/tracks/${id}/stream`)]);
+  engine.dispose();
+});
 
 test('AudioEngine plays only a prepared source and an authorized playback attempt', async (t) => {
   const { audible, blockNextPlay, playCalls } = browser(t);

@@ -150,6 +150,7 @@ interface RawTrack {
   album?: string | null;
   genre?: string | null;
   duration?: number | null;
+  streamUrl?: string | null;
 }
 
 function toTrack(raw: RawTrack): Track {
@@ -161,7 +162,7 @@ function toTrack(raw: RawTrack): Track {
     genre: raw.genre ?? undefined,
     duration: raw.duration ?? undefined,
     coverUrl: mediaUrl(raw.imageUrl),
-    streamUrl: `${BASE_URL}/tracks/${raw.id}/stream`,
+    streamUrl: mediaUrl(raw.streamUrl) ?? `${BASE_URL}/tracks/${raw.id}/stream`,
   };
 }
 
