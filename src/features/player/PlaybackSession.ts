@@ -182,6 +182,9 @@ export class PlaybackSession {
   };
 
   play = (track: Track, trackList?: Track[]) => {
+    if (!this.engine) this.createEngine();
+    this.engine?.unlock();
+
     if (this.engineTrackId === track.id && this.hasLease() && (this.needsGesture ||
       (this.engineStatus === 'error' && this.snapshot && this.isPlaying(this.snapshot)))) {
       this.retryPlayback();

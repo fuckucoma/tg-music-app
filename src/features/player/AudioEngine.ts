@@ -31,7 +31,12 @@ export class AudioEngine {
     this.audio.volume = volume;
     this.listeners = {
       playing: () => {
-        if (this.wantsPlayback && !this.audio.paused && this.audio.readyState >= 3) {
+        if (this.wantsPlayback && !this.audio.paused) {
+          this.setStatus('playing');
+        }
+      },
+      canplay: () => {
+        if (this.wantsPlayback && !this.audio.paused) {
           this.setStatus('playing');
         }
       },
@@ -126,6 +131,25 @@ export class AudioEngine {
       this.mediaSession.playbackState = 'none';
       this.setMediaPosition();
       for (const action of mediaActions) this.setMediaAction(action, null);
+    }
+  }
+
+  unlock() {
+    if (this.hasTrack) return;
+    this.audio.muted = true;
+    const p = this.audio.play();
+    if (p) {
+      p.then(() => {
+        if (!this.hasTrack) {
+          this.audio.pause();
+          this.audio.currentTime = 0;
+        }
+        this.audio.muted = false;
+      }).catch(() => {
+        this.audio.muted = false;
+      });
+    } else {
+      this.audio.muted = false;
     }
   }
 
