@@ -140,16 +140,19 @@ export function usePlayerController({
   catalog = emptyCatalog, onSessionExpired,
 }: PlaybackOptions) {
   const authenticated = token !== null && userId !== null;
-  const guest = useLocalPlayer(!authenticated);
   const credentials = useMemo(createPlaybackDevice, [userId]);
   const [connection, setConnection] = useState<{
     credentials: typeof credentials;
     session: PlaybackSession;
   } | null>(null);
-  const latest = useRef({ catalog, volume: guest.volume, onSessionExpired });
+  const synced = connection?.credentials === credentials && connection.session.token === token ? connection.session : null;
+  const view = useSyncExternalStore(synced?.subscribe ?? subscribeIdle, synced?.getView ?? initialView);
+  const legacyApi = authenticated && view.connection === 'unsupported';
+  const local = useLocalPlayer(!authenticated || legacyApi);
+  const latest = useRef({ catalog, volume: local.volume, onSessionExpired });
   useLayoutEffect(() => {
-    latest.current = { catalog, volume: guest.volume, onSessionExpired };
-  }, [catalog, guest.volume, onSessionExpired]);
+    latest.current = { catalog, volume: local.volume, onSessionExpired };
+  }, [catalog, local.volume, onSessionExpired]);
 
   useLayoutEffect(() => {
     if (token === null || userId === null) {
@@ -164,16 +167,14 @@ export function usePlayerController({
     return () => session.dispose();
   }, [credentials, deviceLabel, platform, token, userId]);
 
-  const synced = connection?.credentials === credentials && connection.session.token === token ? connection.session : null;
   useLayoutEffect(() => { synced?.rememberCatalog(catalog); }, [catalog, synced]);
-  useLayoutEffect(() => { synced?.setVolume(guest.volume); }, [guest.volume, synced]);
+  useLayoutEffect(() => { synced?.setVolume(local.volume); }, [local.volume, synced]);
 
-  const view = useSyncExternalStore(synced?.subscribe ?? subscribeIdle, synced?.getView ?? initialView);
-  if (!authenticated) return {
+  if (!authenticated || legacyApi) return {
     ...initialPlaybackView,
-    ...guest,
+    ...local,
     mode: 'local' as const,
-    connection: 'idle' as const,
+    connection: legacyApi ? view.connection : 'idle' as const,
     deviceId: credentials.deviceId,
     takeOver: noop,
     clearNotice: noop,
@@ -183,8 +184,8 @@ export function usePlayerController({
   return {
     ...view,
     deviceId: credentials.deviceId,
-    volume: guest.volume,
-    changeVolume: guest.changeVolume,
+    volume: local.volume,
+    changeVolume: local.changeVolume,
     play: synced?.play ?? noop,
     playNext: synced?.playNext ?? noop,
     playPrev: synced?.playPrev ?? noop,

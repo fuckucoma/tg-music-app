@@ -12,7 +12,7 @@ const deadlineMargin = 750;
 const queueLimit = 300;
 const nextRepeat: Record<RepeatMode, RepeatMode> = { none: 'all', all: 'one', one: 'none' };
 
-export type PlaybackConnection = 'idle' | 'connecting' | 'online' | 'reconnecting' | 'offline';
+export type PlaybackConnection = 'idle' | 'connecting' | 'online' | 'reconnecting' | 'offline' | 'unsupported';
 
 interface PlaybackView {
   currentTrack: Track | null;
@@ -285,7 +285,7 @@ export class PlaybackSession {
   };
 
   private wake = () => {
-    if (!this.suspended || this.abort.signal.aborted) return;
+    if (!this.suspended || this.abort.signal.aborted || this.connection === 'unsupported') return;
     this.suspended = false;
     this.refreshSoon();
     void this.connectEvents();
@@ -295,8 +295,9 @@ export class PlaybackSession {
     if (!this.running) return Promise.resolve();
     if (this.refreshInFlight) return this.refreshInFlight;
     this.refreshInFlight = (async () => {
+      let registrationError: unknown;
       if (!this.registered) {
-        await this.request((signal) => this.api.register(this.deviceLabel, this.platform, signal), false, () => {
+        registrationError = await this.request((signal) => this.api.register(this.deviceLabel, this.platform, signal), false, () => {
           this.registered = true;
         });
       }
@@ -309,7 +310,19 @@ export class PlaybackSession {
           this.registered = false;
         }
       } else if (!this.snapshot) {
-        await this.request((signal) => this.api.session(signal), false);
+        const sessionError = await this.request((signal) => this.api.session(signal), false);
+        // A legacy server has neither route. A live shared session or a transient error
+        // must still use the lease rather than starting a second local audio engine.
+        if (this.running && !this.snapshot &&
+            registrationError instanceof PlaybackApiError && registrationError.status === 404 &&
+            sessionError instanceof PlaybackApiError && sessionError.status === 404) {
+          this.suspend();
+          clearInterval(this.heartbeatTimer);
+          clearInterval(this.progressTimer);
+          this.connection = 'unsupported';
+          this.notice = null;
+          this.publish();
+        }
       }
     })().finally(() => {
       this.refreshInFlight = null;

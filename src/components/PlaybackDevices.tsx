@@ -14,6 +14,7 @@ const copy = {
     switching: 'Switching audio output…',
     connecting: 'Connecting to your music session…',
     disconnected: 'Connection lost. Reconnecting…',
+    unsupported: 'Device sync is unavailable. Playback works on this device.',
     select: 'Play on',
     continue: 'Continue playback here',
     dismiss: 'Dismiss playback message',
@@ -27,6 +28,7 @@ const copy = {
     switching: 'Переключаем устройство…',
     connecting: 'Подключаем музыкальную сессию…',
     disconnected: 'Связь потеряна. Переподключаемся…',
+    unsupported: 'Синхронизация недоступна. Музыку можно слушать на этом устройстве.',
     select: 'Воспроизводить на устройстве',
     continue: 'Продолжить воспроизведение здесь',
     dismiss: 'Скрыть сообщение плеера',
@@ -118,8 +120,11 @@ export function PlaybackDevices({ language }: { language: Language }) {
 
 export function PlaybackSessionNotice({ language }: { language: Language }) {
   const player = usePlayer();
-  if (player.mode === 'local') return null;
   const labels = copy[language];
+  if (player.connection === 'unsupported') {
+    return <p className="px-2 py-1 text-xs text-muted" role="status">{labels.unsupported}</p>;
+  }
+  if (player.mode === 'local') return null;
   const text = player.notice ?? (player.pendingDeviceId
     ? labels.switching
     : player.connection === 'offline' || player.connection === 'reconnecting'
