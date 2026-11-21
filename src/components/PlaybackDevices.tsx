@@ -14,9 +14,15 @@ const copy = {
     switching: 'Switching audio output…',
     connecting: 'Connecting to your music session…',
     disconnected: 'Connection lost. Reconnecting…',
+    recoveringAudio: 'Connection interrupted. Audio is still playing here.',
+    waitingForOutput: 'Waiting for the server to confirm audio output…',
     unsupported: 'Device sync is unavailable. Playback works on this device.',
     select: 'Play on',
     continue: 'Continue playback here',
+    gesture: 'Tap to allow playback on this device.',
+    playbackError: 'This track could not play on this device.',
+    retry: 'Try again',
+    remove: 'Remove',
     dismiss: 'Dismiss playback message',
   },
   ru: {
@@ -28,9 +34,15 @@ const copy = {
     switching: 'Переключаем устройство…',
     connecting: 'Подключаем музыкальную сессию…',
     disconnected: 'Связь потеряна. Переподключаемся…',
+    recoveringAudio: 'Связь прервалась. Музыка пока играет здесь.',
+    waitingForOutput: 'Ждём подтверждения вывода звука от сервера…',
     unsupported: 'Синхронизация недоступна. Музыку можно слушать на этом устройстве.',
     select: 'Воспроизводить на устройстве',
     continue: 'Продолжить воспроизведение здесь',
+    gesture: 'Нажмите, чтобы разрешить воспроизведение на этом устройстве.',
+    playbackError: 'Не удалось воспроизвести трек на этом устройстве.',
+    retry: 'Повторить',
+    remove: 'Удалить',
     dismiss: 'Скрыть сообщение плеера',
   },
 };
@@ -80,18 +92,21 @@ export function PlaybackDevices({ language }: { language: Language }) {
             </button>
           </header>
           {status && <p role="status" className="pb-3 pt-1 text-sm text-muted">{status}</p>}
+          {player.notice && <p role="status" className="pt-1 text-sm text-muted">{player.notice}</p>}
           <ul className="my-2 grid gap-2">
             {player.devices.map((device) => {
               const here = device.id === player.deviceId;
               const active = device.id === player.activeDeviceId;
+              const pendingOnLiveOutput = Boolean(player.activeDeviceId && device.id === player.pendingDeviceId);
+              const canRemove = !here && !active && !device.online && !pendingOnLiveOutput;
               return (
-                <li key={device.id}>
+                <li key={device.id} className="flex items-center gap-2">
                   <button
                     type="button"
                     aria-label={`${labels.select} ${device.name}${here ? ` (${labels.here})` : ''}`}
                     aria-pressed={active}
                     disabled={active || !device.online || Boolean(player.pendingDeviceId) || player.connection !== 'online'}
-                    className="flex w-full items-center gap-3 rounded-xl border border-[var(--border)] bg-bg p-3 text-left enabled:hover:border-muted disabled:cursor-default"
+                    className="flex min-w-0 flex-1 items-center gap-3 rounded-xl border border-[var(--border)] bg-bg p-3 text-left enabled:hover:border-muted disabled:cursor-default"
                     onClick={() => player.takeOver(device.id)}
                   >
                     <Icon name={active ? 'volume' : 'devices'} size={18} />
@@ -104,6 +119,13 @@ export function PlaybackDevices({ language }: { language: Language }) {
                       )}
                     </span>
                   </button>
+                  {canRemove && (
+                    <button type="button" className="rounded-lg border border-[var(--border)] px-2.5 py-2 text-xs text-muted enabled:hover:text-text disabled:opacity-50"
+                      aria-label={`${labels.remove} ${device.name}`}
+                      aria-busy={player.removingDeviceId === device.id}
+                      disabled={player.removingDeviceId !== null || player.connection !== 'online'}
+                      onClick={() => player.removeDevice(device.id)}>{labels.remove}</button>
+                  )}
                 </li>
               );
             })}
@@ -125,19 +147,24 @@ export function PlaybackSessionNotice({ language }: { language: Language }) {
     return <p className="px-2 py-1 text-xs text-muted" role="status">{labels.unsupported}</p>;
   }
   if (player.mode === 'local') return null;
+  const playbackError = player.mode === 'active' && player.status === 'error';
+  const disconnected = player.connection === 'offline' || player.connection === 'reconnecting';
+  const awaitingOwnOutput = player.activeDeviceId === player.deviceId && player.mode === 'remote';
   const text = player.notice ?? (player.pendingDeviceId
     ? labels.switching
-    : player.connection === 'offline' || player.connection === 'reconnecting'
-      ? labels.disconnected
-      : null);
-  if (!text && !player.needsGesture) return null;
+    : disconnected
+      ? player.mode === 'active' && player.status === 'playing' ? labels.recoveringAudio : labels.disconnected
+      : awaitingOwnOutput
+        ? labels.waitingForOutput
+        : player.needsGesture ? labels.gesture : playbackError ? labels.playbackError : null);
+  if (!text) return null;
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-surface px-3 py-2 text-sm text-text">
       {text && <span role="status">{text}</span>}
-      {player.needsGesture && (
+      {(player.needsGesture || playbackError) && (
         <button type="button" className="rounded-md bg-accent px-2 py-1 text-xs text-accent-fg"
-          onClick={player.retryPlayback}>{labels.continue}</button>
+          onClick={player.retryPlayback}>{player.needsGesture ? labels.continue : labels.retry}</button>
       )}
       {player.notice && (
         <button type="button" aria-label={labels.dismiss} className="ml-auto p-1" onClick={player.clearNotice}>

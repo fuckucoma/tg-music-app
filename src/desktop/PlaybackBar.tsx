@@ -114,7 +114,7 @@ export function PlaybackBar({ player, onQueue, queueOpen, onStart, canStart }: P
           />
           <span>{time(duration)}</span>
         </div>
-        {player.status === 'error' && !player.needsGesture && (
+        {player.mode === 'local' && player.status === 'error' && (
           <span className="du-playback-error" role="alert">
             Не удалось воспроизвести трек
           </span>

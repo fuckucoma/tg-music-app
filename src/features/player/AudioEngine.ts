@@ -7,6 +7,7 @@ interface AudioCallbacks {
   onEnded: () => void;
   onNext: () => void;
   onPrevious: () => void;
+  canPlay?: () => boolean;
   onPlaybackBlocked?: () => void;
   onMediaPlay?: () => void;
   onMediaPause?: () => void;
@@ -31,11 +32,6 @@ export class AudioEngine {
     this.audio.volume = volume;
     this.listeners = {
       playing: () => {
-        if (this.wantsPlayback && !this.audio.paused) {
-          this.setStatus('playing');
-        }
-      },
-      canplay: () => {
         if (this.wantsPlayback && !this.audio.paused) {
           this.setStatus('playing');
         }
@@ -89,11 +85,11 @@ export class AudioEngine {
     this.wantsPlayback = false;
     this.hasTrack = true;
     this.pendingPosition = position > 0 ? position : null;
-    this.audio.src = track.streamUrl;
-    this.audio.load();
     this.callbacks.onProgress(0);
     this.callbacks.onDuration(0);
     this.setMediaTrack(track);
+    this.audio.src = track.streamUrl;
+    this.audio.load();
     if (playing) this.resume();
     else this.setStatus('paused');
   }
@@ -134,27 +130,8 @@ export class AudioEngine {
     }
   }
 
-  unlock() {
-    if (this.hasTrack) return;
-    this.audio.muted = true;
-    const p = this.audio.play();
-    if (p) {
-      p.then(() => {
-        if (!this.hasTrack) {
-          this.audio.pause();
-          this.audio.currentTime = 0;
-        }
-        this.audio.muted = false;
-      }).catch(() => {
-        this.audio.muted = false;
-      });
-    } else {
-      this.audio.muted = false;
-    }
-  }
-
   resume() {
-    if (!this.hasTrack || this.wantsPlayback) return;
+    if (!this.hasTrack || this.wantsPlayback || this.callbacks.canPlay?.() === false) return;
     if (this.audio.error) this.audio.load();
     this.wantsPlayback = true;
     const requestId = ++this.requestId;
@@ -163,7 +140,9 @@ export class AudioEngine {
       if (requestId !== this.requestId) return;
       this.wantsPlayback = false;
       this.setStatus('error');
-      if (error instanceof DOMException && error.name === 'NotAllowedError') this.callbacks.onPlaybackBlocked?.();
+      if (typeof error === 'object' && error !== null && 'name' in error && error.name === 'NotAllowedError') {
+        this.callbacks.onPlaybackBlocked?.();
+      }
     });
   }
 

@@ -1,8 +1,9 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import type { DevicePlatform } from '../../services/playback';
+import { useCallback, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
+import type { DeviceCredentials, DevicePlatform } from '../../services/playback';
 import type { PlayerStatus, Track } from '../../types/track';
 import { AudioEngine } from './AudioEngine';
-import { createPlaybackDevice, initialPlaybackView, PlaybackSession } from './PlaybackSession';
+import { claimPlaybackIdentity } from './deviceIdentity';
+import { initialPlaybackView, PlaybackSession } from './PlaybackSession';
 import {
   cycleRepeat, emptyQueue, nextTrack, previousTrack, selectTrack, toggleShuffle,
   type PlaybackQueue,
@@ -11,9 +12,13 @@ import {
 const volumeKey = 'tg_music_volume';
 
 function savedVolume() {
-  const stored = localStorage.getItem(volumeKey);
-  const value = stored === null ? 1 : Number(stored);
-  return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
+  try {
+    const stored = localStorage.getItem(volumeKey);
+    const value = stored === null ? 1 : Number(stored);
+    return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
+  } catch {
+    return 1;
+  }
 }
 
 function useLocalPlayer(enabled: boolean) {
@@ -95,7 +100,7 @@ function useLocalPlayer(enabled: boolean) {
     engineRef.current?.setVolume(next);
     volumeRef.current = next;
     setVolume(next);
-    localStorage.setItem(volumeKey, String(next));
+    try { localStorage.setItem(volumeKey, String(next)); } catch { /* optional persistence */ }
   }, []);
 
   const handleShuffle = useCallback(() => updateQueue(toggleShuffle(queueRef.current)), [updateQueue]);
@@ -140,12 +145,15 @@ export function usePlayerController({
   catalog = emptyCatalog, onSessionExpired,
 }: PlaybackOptions) {
   const authenticated = token !== null && userId !== null;
-  const credentials = useMemo(createPlaybackDevice, [userId]);
-  const [connection, setConnection] = useState<{
-    credentials: typeof credentials;
-    session: PlaybackSession;
+  const [identity, setIdentity] = useState<{
+    userId: number;
+    credentials: DeviceCredentials;
   } | null>(null);
-  const synced = connection?.credentials === credentials && connection.session.token === token ? connection.session : null;
+  const [connection, setConnection] = useState<PlaybackSession | null>(null);
+  const sessionRef = useRef<PlaybackSession | null>(null);
+  const credentials = identity?.userId === userId ? identity.credentials : null;
+  const synced = credentials && connection?.token === token && connection.deviceId === credentials.deviceId
+    ? connection : null;
   const view = useSyncExternalStore(synced?.subscribe ?? subscribeIdle, synced?.getView ?? initialView);
   const legacyApi = authenticated && view.connection === 'unsupported';
   const local = useLocalPlayer(!authenticated || legacyApi);
@@ -155,7 +163,38 @@ export function usePlayerController({
   }, [catalog, local.volume, onSessionExpired]);
 
   useLayoutEffect(() => {
-    if (token === null || userId === null) {
+    if (userId === null) {
+      setIdentity(null);
+      return;
+    }
+    const controller = new AbortController();
+    let release: (() => void) | undefined;
+    void claimPlaybackIdentity(userId, controller.signal).then((value) => {
+      if (!value) return;
+      if (controller.signal.aborted) {
+        value.release();
+        return;
+      }
+      release = value.release;
+      setIdentity({ userId, credentials: value.credentials });
+    });
+    const close = (event: PageTransitionEvent) => {
+      if (event.persisted) return;
+      sessionRef.current?.dispose(false);
+      release?.();
+      controller.abort();
+    };
+    window.addEventListener('pagehide', close);
+    return () => {
+      controller.abort();
+      sessionRef.current?.dispose();
+      release?.();
+      window.removeEventListener('pagehide', close);
+    };
+  }, [userId]);
+
+  useLayoutEffect(() => {
+    if (token === null || !credentials) {
       setConnection(null);
       return;
     }
@@ -163,9 +202,13 @@ export function usePlayerController({
       (error, expiredToken) => latest.current.onSessionExpired?.(error, expiredToken));
     session.rememberCatalog(latest.current.catalog);
     session.start();
-    setConnection({ credentials, session });
-    return () => session.dispose();
-  }, [credentials, deviceLabel, platform, token, userId]);
+    sessionRef.current = session;
+    setConnection(session);
+    return () => {
+      session.dispose(false);
+      if (sessionRef.current === session) sessionRef.current = null;
+    };
+  }, [credentials, deviceLabel, platform, token]);
 
   useLayoutEffect(() => { synced?.rememberCatalog(catalog); }, [catalog, synced]);
   useLayoutEffect(() => { synced?.setVolume(local.volume); }, [local.volume, synced]);
@@ -175,15 +218,16 @@ export function usePlayerController({
     ...local,
     mode: 'local' as const,
     connection: legacyApi ? view.connection : 'idle' as const,
-    deviceId: credentials.deviceId,
+    deviceId: credentials?.deviceId ?? '',
     takeOver: noop,
     clearNotice: noop,
     retryPlayback: noop,
+    removeDevice: noop,
   };
 
   return {
     ...view,
-    deviceId: credentials.deviceId,
+    deviceId: credentials?.deviceId ?? '',
     volume: local.volume,
     changeVolume: local.changeVolume,
     play: synced?.play ?? noop,
@@ -195,6 +239,7 @@ export function usePlayerController({
     takeOver: synced?.takeOver ?? noop,
     clearNotice: synced?.clearNotice ?? noop,
     retryPlayback: synced?.retryPlayback ?? noop,
+    removeDevice: synced?.removeDevice ?? noop,
   };
 }
 

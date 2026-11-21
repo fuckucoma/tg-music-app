@@ -5,6 +5,7 @@ import { PlaybackDevices, PlaybackSessionNotice } from '../components/PlaybackDe
 import { ProfilePanel } from '../components/ProfilePanel';
 import { SearchBar } from '../components/SearchBar';
 import { TrackRow } from '../components/TrackRow';
+import { TrackPageControls } from '../components/TrackPageControls';
 import { usePlayer } from '../features/player/PlayerProvider';
 import { useState } from 'react';
 import type { LayoutProps } from './AppShell';
@@ -112,6 +113,9 @@ export default function MobileLayout({ auth, favorites, library, search, hapticT
               />
             ))}
           </div>
+        )}
+        {tab === 'all' && !error && !loading && (
+          <TrackPageControls page={query ? search : library} language="en" />
         )}
       </main>
 

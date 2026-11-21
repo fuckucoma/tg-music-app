@@ -23,6 +23,7 @@ export function useAuth(initData?: string) {
   const [attempt, setAttempt] = useState(0);
   const current = useRef<AbortController>();
   const activeToken = useRef<string | null>(null);
+  const loggingOut = useRef<string | null>(null);
   const accountChange = useRef<{ token: string | null } | null>(null);
   const openAuth = useCallback(() => setAuthOpen(true), []);
   const closeAuth = useCallback(() => setAuthOpen(false), []);
@@ -106,7 +107,7 @@ export function useAuth(initData?: string) {
   }, [verifyCredentials]);
 
   const changeAccount = useCallback(async (requestToken: () => Promise<string>) => {
-    if (accountChange.current) throw new Error('Another account change is in progress');
+    if (accountChange.current || loggingOut.current) throw new Error('Another account change is in progress');
     const change = { token: activeToken.current };
     accountChange.current = change;
     try {
@@ -119,16 +120,33 @@ export function useAuth(initData?: string) {
     }
   }, [verifyCredentials]);
 
-  const logout = useCallback(() => {
+  const logout = useCallback(async () => {
+    const token = activeToken.current;
+    if (!token || loggingOut.current === token) return;
     accountChange.current = null;
     current.current?.abort();
-    const token = activeToken.current;
+    loggingOut.current = token;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 10_000);
+    try {
+      await endSession(token, controller.signal);
+    } catch (error) {
+      if (!invalidSession(error)) {
+        if (activeToken.current === token) setNotice('Не удалось завершить сессию. Повторите выход.');
+        return;
+      }
+    } finally {
+      window.clearTimeout(timeout);
+      if (loggingOut.current === token) loggingOut.current = null;
+    }
+    if (activeToken.current !== token) return;
+    accountChange.current = null;
+    current.current?.abort();
     activeToken.current = null;
-    if (token && getToken() === token) clearToken();
+    if (getToken() === token) clearToken();
     setSession(guest);
     closeAuth();
     clearNotice();
-    if (token) void endSession(token).catch(() => {});
   }, [closeAuth, clearNotice]);
 
   const checkError = useCallback((error: unknown, token: string) => {

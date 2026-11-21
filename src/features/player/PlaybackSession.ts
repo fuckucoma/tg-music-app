@@ -1,4 +1,4 @@
-import { getTracks } from '../../services/api';
+import { ApiError, getTracksByIds } from '../../services/api';
 import {
   playbackApi, PlaybackApiError,
   type DeviceCredentials, type DevicePlatform, type PlaybackCommand, type PlaybackDevice, type PlaybackSnapshot,
@@ -7,7 +7,10 @@ import type { PlayerStatus, Track } from '../../types/track';
 import { AudioEngine } from './AudioEngine';
 import type { RepeatMode } from './PlayerStore';
 
-const heartbeatInterval = 4_000;
+const activeHeartbeatInterval = 6_500;
+const passiveHeartbeatInterval = 15_000;
+const pollingHeartbeatInterval = 4_000;
+const recoveryHeartbeatInterval = 2_000;
 const deadlineMargin = 750;
 const queueLimit = 300;
 const nextRepeat: Record<RepeatMode, RepeatMode> = { none: 'all', all: 'one', one: 'none' };
@@ -29,27 +32,15 @@ interface PlaybackView {
   activeDeviceId: string | null;
   pendingDeviceId: string | null;
   needsGesture: boolean;
+  removingDeviceId: string | null;
   notice: string | null;
 }
 
 export const initialPlaybackView: PlaybackView = {
   currentTrack: null, queue: [], queueIndex: -1, status: 'idle', progress: 0, duration: 0,
   shuffle: false, repeat: 'none', mode: 'remote', connection: 'connecting', devices: [],
-  activeDeviceId: null, pendingDeviceId: null, needsGesture: false, notice: null,
+  activeDeviceId: null, pendingDeviceId: null, needsGesture: false, removingDeviceId: null, notice: null,
 };
-
-function hex(bytes: Uint8Array) {
-  return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-export function createPlaybackDevice(): DeviceCredentials {
-  const uuid = crypto.getRandomValues(new Uint8Array(16));
-  uuid[6] = (uuid[6] & 0x0f) | 0x40;
-  uuid[8] = (uuid[8] & 0x3f) | 0x80;
-  const text = hex(uuid);
-  const deviceId = [text.slice(0, 8), text.slice(8, 12), text.slice(12, 16), text.slice(16, 20), text.slice(20)].join('-');
-  return { deviceId, deviceKey: hex(crypto.getRandomValues(new Uint8Array(32))) };
-}
 
 function isNewer(snapshot: PlaybackSnapshot, previous: PlaybackSnapshot | null) {
   if (!previous) return true;
@@ -96,14 +87,18 @@ export class PlaybackSession {
   private ackPosition: number | undefined;
   private commands = Promise.resolve();
   private eventsAbort: AbortController | null = null;
+  private eventsHealthy = false;
   private reconnectDelay = 1_000;
   private nextCatalogAttempt = 0;
+  private catalogRequestPending = false;
+  private readonly unavailableTracks = new Set<number>();
   private lastReportAt = -Infinity;
   private endedVersion: number | null = null;
   private deferredSeek: { trackId: number; position: number } | null = null;
   private suspended = false;
   private generation = 0;
   private connection: PlaybackConnection = 'connecting';
+  private removingDeviceId: string | null = null;
   private notice: string | null = null;
 
   constructor(
@@ -117,7 +112,7 @@ export class PlaybackSession {
     this.api = playbackApi(token, credentials);
   }
 
-  private get deviceId() { return this.credentials.deviceId; }
+  get deviceId() { return this.credentials.deviceId; }
   private get running() { return !this.abort.signal.aborted && !this.suspended; }
 
   subscribe = (listener: () => void) => {
@@ -131,22 +126,24 @@ export class PlaybackSession {
     const on = window.addEventListener.bind(window);
     on('pagehide', this.suspend);
     on('pageshow', this.wake);
+    on('online', this.online);
+    on('offline', this.offline);
     document.addEventListener('freeze', this.suspend);
     document.addEventListener('resume', this.wake);
     document.addEventListener('visibilitychange', this.checkLease);
-    this.heartbeatTimer = window.setInterval(() => void this.refresh(), heartbeatInterval);
     this.progressTimer = window.setInterval(this.tick, 250);
     void this.refresh();
     void this.connectEvents();
   }
 
-  dispose() {
-    this.suspend();
+  dispose(release = true) {
+    this.stopSession(release);
     this.abort.abort();
-    clearInterval(this.heartbeatTimer);
     clearInterval(this.progressTimer);
     window.removeEventListener('pagehide', this.suspend);
     window.removeEventListener('pageshow', this.wake);
+    window.removeEventListener('online', this.online);
+    window.removeEventListener('offline', this.offline);
     document.removeEventListener('freeze', this.suspend);
     document.removeEventListener('resume', this.wake);
     document.removeEventListener('visibilitychange', this.checkLease);
@@ -173,20 +170,18 @@ export class PlaybackSession {
     if (!this.hasLease() || !this.engine) return;
     const trackId = this.engineTrackId;
     const position = this.engineDuration ? this.engine.currentTime : this.position();
+    const wasBlocked = this.needsGesture;
     this.needsGesture = false;
     this.endedVersion = null;
     this.engine.resume();
-    this.send((snapshot) => this.hasLease() && snapshot.session.trackId === trackId && !this.isPlaying(snapshot)
-      ? { type: 'play', position } : null);
+    this.send((snapshot) => this.hasLease() && snapshot.session.trackId === trackId && (wasBlocked || !this.isPlaying(snapshot))
+      ? { type: 'play', position } : null, () => this.applyAudio());
     this.publish();
   };
 
   play = (track: Track, trackList?: Track[]) => {
-    if (!this.engine) this.createEngine();
-    this.engine?.unlock();
-
-    if (this.engineTrackId === track.id && this.hasLease() && (this.needsGesture ||
-      (this.engineStatus === 'error' && this.snapshot && this.isPlaying(this.snapshot)))) {
+    if (this.engineTrackId === track.id && this.hasLease() && this.snapshot &&
+      (this.needsGesture || this.engineStatus === 'error' || !this.isPlaying(this.snapshot))) {
       this.retryPlayback();
       return;
     }
@@ -209,6 +204,20 @@ export class PlaybackSession {
   toggleShuffle = () => this.send(({ session }) => ({ type: 'setShuffle', shuffle: !session.shuffle }));
   cycleRepeat = () => this.send(({ session }) => ({ type: 'setRepeat', repeat: nextRepeat[session.repeat] }));
   takeOver = (targetDeviceId = this.deviceId) => this.send(() => ({ type: 'transfer', targetDeviceId }));
+
+  removeDevice = (deviceId: string) => {
+    const device = this.snapshot?.devices.find(({ id }) => id === deviceId);
+    if (!this.running || this.removingDeviceId || !device || device.online || deviceId === this.deviceId ||
+      deviceId === this.view.activeDeviceId || (this.view.activeDeviceId && deviceId === this.view.pendingDeviceId)) return;
+    this.removingDeviceId = deviceId;
+    this.publish();
+    void this.request((signal) => this.api.removeDevice(deviceId, signal), false).then((error) => {
+      this.removingDeviceId = null;
+      if (!this.running) return;
+      this.notice = error ? 'Не удалось удалить устройство. Обновите список и попробуйте ещё раз.' : null;
+      this.publish();
+    });
+  };
 
   seek = (ratio: number) => {
     if (Number.isFinite(ratio)) this.queueSeek(this.view.duration * Math.min(1, Math.max(0, ratio)));
@@ -268,7 +277,23 @@ export class PlaybackSession {
     if (this.snapshot && !this.engine && this.snapshot.session.playing) this.publish();
   };
 
-  private suspend = () => {
+  private online = () => {
+    if (!this.running) return;
+    this.refreshSoon();
+    void this.connectEvents();
+  };
+
+  private offline = () => {
+    if (!this.running) return;
+    this.connection = this.snapshot ? 'reconnecting' : 'offline';
+    this.eventsAbort?.abort();
+    this.scheduleHeartbeat();
+    this.publish();
+  };
+
+  private suspend = () => this.stopSession(false);
+
+  private stopSession(release: boolean) {
     if (this.suspended) return;
     const hasLease = this.hasLease();
     const session = this.snapshot?.session;
@@ -277,15 +302,16 @@ export class PlaybackSession {
     this.generation++;
     this.leaseDeadline = 0;
     this.deferredSeek = null;
+    clearTimeout(this.heartbeatTimer);
     clearTimeout(this.leaseTimer);
     clearTimeout(this.claimTimer);
     clearTimeout(this.seekTimer);
     clearTimeout(this.reconnectTimer);
     this.eventsAbort?.abort();
-    if (hasLease && session) {
+    if (release && hasLease && session) {
       void this.api.command(session.version, { type: 'release', position }, undefined, true).catch(() => {});
     }
-  };
+  }
 
   private wake = () => {
     if (!this.suspended || this.abort.signal.aborted || this.connection === 'unsupported') return;
@@ -297,6 +323,7 @@ export class PlaybackSession {
   private refresh(): Promise<void> {
     if (!this.running) return Promise.resolve();
     if (this.refreshInFlight) return this.refreshInFlight;
+    clearTimeout(this.heartbeatTimer);
     this.refreshInFlight = (async () => {
       let registrationError: unknown;
       if (!this.registered) {
@@ -320,7 +347,6 @@ export class PlaybackSession {
             registrationError instanceof PlaybackApiError && registrationError.status === 404 &&
             sessionError instanceof PlaybackApiError && sessionError.status === 404) {
           this.suspend();
-          clearInterval(this.heartbeatTimer);
           clearInterval(this.progressTimer);
           this.connection = 'unsupported';
           this.notice = null;
@@ -332,9 +358,23 @@ export class PlaybackSession {
       if (this.refreshRequested) {
         this.refreshRequested = false;
         void this.refresh();
-      }
+      } else this.scheduleHeartbeat();
     });
     return this.refreshInFlight;
+  }
+
+  private scheduleHeartbeat() {
+    clearTimeout(this.heartbeatTimer);
+    if (!this.running) return;
+    let delay = passiveHeartbeatInterval;
+    if (this.connection === 'reconnecting' || this.connection === 'offline') {
+      delay = recoveryHeartbeatInterval;
+    } else if (!this.eventsHealthy) {
+      delay = pollingHeartbeatInterval;
+    } else if (this.snapshot?.session.activeDeviceId === this.deviceId) {
+      delay = activeHeartbeatInterval;
+    }
+    this.heartbeatTimer = window.setTimeout(() => void this.refresh(), delay);
   }
 
   private getReport() {
@@ -375,7 +415,7 @@ export class PlaybackSession {
 
   private handleError(error: unknown) {
     if (error instanceof PlaybackApiError && error.status === 401) {
-      this.suspend();
+      this.dispose(false);
       this.onSessionExpired(error, this.token);
       return;
     }
@@ -383,6 +423,7 @@ export class PlaybackSession {
       this.acceptSnapshot(error.snapshot);
       return;
     }
+    if (error instanceof PlaybackApiError && error.status < 500 && error.status !== 429) return;
     this.connection = this.snapshot ? 'reconnecting' : 'offline';
     this.publish();
   }
@@ -400,6 +441,7 @@ export class PlaybackSession {
     try {
       await this.api.events(controller.signal, (snapshot) => {
         if (!this.running || controller.signal.aborted) return;
+        this.eventsHealthy = true;
         this.reconnectDelay = 1_000;
         this.acceptSnapshot(snapshot);
       }, activity);
@@ -408,6 +450,10 @@ export class PlaybackSession {
       if (this.running && error instanceof PlaybackApiError && error.status === 401) this.handleError(error);
     } finally {
       clearTimeout(idleTimer);
+      if (this.eventsHealthy) {
+        this.eventsHealthy = false;
+        this.scheduleHeartbeat();
+      }
       this.eventsAbort = null;
       if (this.running) {
         this.reconnectTimer = window.setTimeout(() => void this.connectEvents(), this.reconnectDelay);
@@ -416,7 +462,7 @@ export class PlaybackSession {
     }
   }
 
-  private send(createCommand: (snapshot: PlaybackSnapshot) => PlaybackCommand | null) {
+  private send(createCommand: (snapshot: PlaybackSnapshot) => PlaybackCommand | null, onFailure?: () => void) {
     const generation = this.generation;
     this.commands = this.commands.catch(() => {}).then(async () => {
       if (!this.running || generation !== this.generation) return;
@@ -432,6 +478,7 @@ export class PlaybackSession {
       const version = this.snapshot.session.version;
       const error = await this.request((signal) => this.api.command(version, command, signal), true);
       if (!this.running || generation !== this.generation) return;
+      if (error) onFailure?.();
       this.notice = error ? 'Не удалось применить действие. Попробуйте ещё раз.' : null;
       this.publish();
     });
@@ -468,6 +515,7 @@ export class PlaybackSession {
         this.leaseDeadline = Math.max(this.leaseDeadline, deadline);
         clearTimeout(this.leaseTimer);
         this.leaseTimer = window.setTimeout(this.checkLease, Math.max(0, this.leaseDeadline - performance.now()));
+        if (!this.refreshInFlight) this.scheduleHeartbeat();
       } else if (previous?.session.activeDeviceId !== this.deviceId || previous.session.pendingDeviceId) {
         this.refreshSoon();
       }
@@ -495,17 +543,31 @@ export class PlaybackSession {
 
   private resolveTracks() {
     const session = this.snapshot?.session;
-    if (!session) return;
-    const missing = (session.trackId !== null && !this.tracks.has(session.trackId)) ||
-      session.queue.some((id) => !this.tracks.has(id));
-    if (!missing || performance.now() < this.nextCatalogAttempt) return;
-    this.nextCatalogAttempt = performance.now() + 8_000;
-    void getTracks(this.abort.signal).then((tracks) => {
+    if (!session || this.catalogRequestPending || performance.now() < this.nextCatalogAttempt) return;
+    const relevant = new Set(session.queue);
+    if (session.trackId !== null) relevant.add(session.trackId);
+    for (const id of this.unavailableTracks) if (!relevant.has(id)) this.unavailableTracks.delete(id);
+    const missing = [...relevant]
+      .filter(id => !this.tracks.has(id) && !this.unavailableTracks.has(id))
+      .slice(0, queueLimit);
+    if (!missing.length) return;
+    this.catalogRequestPending = true;
+    void getTracksByIds(missing, this.abort.signal).then((tracks) => {
       if (!this.running) return;
       for (const track of tracks) this.tracks.set(track.id, track);
+      for (const id of missing) if (!this.tracks.has(id)) this.unavailableTracks.add(id);
       this.applyAudio();
       this.publish();
-    }).catch(() => {});
+    }).catch((error: unknown) => {
+      if (error instanceof ApiError && error.status === 404) {
+        for (const id of missing) this.unavailableTracks.add(id);
+      } else {
+        this.nextCatalogAttempt = performance.now() + 8_000;
+      }
+    }).finally(() => {
+      this.catalogRequestPending = false;
+      if (this.running) this.resolveTracks();
+    });
   }
 
   private applyAudio(timelineChanged = false) {
@@ -538,6 +600,7 @@ export class PlaybackSession {
 
   private createEngine() {
     const engine = new AudioEngine({
+      canPlay: () => this.hasLease(),
       onStatus: (status) => {
         if (this.engine !== engine) return;
         this.engineStatus = status;
@@ -617,7 +680,8 @@ export class PlaybackSession {
       duration, shuffle: session?.shuffle ?? false, repeat: session?.repeat ?? 'none',
       mode: local ? 'active' : 'remote', connection: this.connection, devices: snapshot?.devices ?? [],
       activeDeviceId: (session?.leaseUntil ?? 0) > this.serverNow ? session?.activeDeviceId ?? null : null,
-      pendingDeviceId: session?.pendingDeviceId ?? null, needsGesture: this.needsGesture, notice: this.notice,
+      pendingDeviceId: session?.pendingDeviceId ?? null, needsGesture: this.needsGesture,
+      removingDeviceId: this.removingDeviceId, notice: this.notice,
     };
     for (const listener of this.listeners) listener();
   }

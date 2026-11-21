@@ -109,8 +109,26 @@ export async function getProfile(token: string, signal?: AbortSignal): Promise<P
   return { ...profile, profileImageUrl: mediaUrl(profile.profileImageUrl) };
 }
 
-export function logout(token: string) {
-  return request('/users/logout', { method: 'POST' }, token);
+export function logout(token: string, signal?: AbortSignal) {
+  return request('/users/logout', { method: 'POST', signal }, token);
+}
+
+export interface LoginSession {
+  id: string;
+  method: 'password' | 'telegram';
+  userAgent: string | null;
+  createdAt: string;
+  expiresAt: string;
+  current: boolean;
+}
+
+export async function getLoginSessions(token: string, signal: AbortSignal) {
+  const result = await request<{ sessions: LoginSession[] }>('/users/sessions', { signal }, token);
+  return result.sessions;
+}
+
+export function revokeLoginSession(token: string, id: string) {
+  return request<{ revoked: true }>(`/users/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }, token);
 }
 
 export async function uploadAvatar(token: string, file: File) {
@@ -147,13 +165,21 @@ function toTrack(raw: RawTrack): Track {
   };
 }
 
-export async function getTracks(signal?: AbortSignal) {
-  return (await request<RawTrack[]>('/tracks', { signal })).map(toTrack);
+export async function getTrackPage(query: string, before: number | null, signal: AbortSignal) {
+  const params = new URLSearchParams({ limit: '40' });
+  if (before !== null) params.set('before', String(before));
+  if (query) params.set('query', query);
+  const path = query ? '/tracks/search' : '/tracks';
+  const page = await request<RawTrack[] | { items: RawTrack[]; nextCursor: number | null }>(
+    `${path}?${params}`, { signal },
+  );
+  if (Array.isArray(page)) return { tracks: page.map(toTrack), nextCursor: null, legacy: true };
+  return { tracks: page.items.map(toTrack), nextCursor: page.nextCursor, legacy: false };
 }
 
-export async function searchTracks(query: string, signal: AbortSignal) {
-  const path = `/tracks/search?query=${encodeURIComponent(query)}`;
-  return (await request<RawTrack[]>(path, { signal })).map(toTrack);
+export async function getTracksByIds(ids: number[], signal: AbortSignal) {
+  const params = new URLSearchParams({ ids: ids.join(',') });
+  return (await request<RawTrack[]>(`/tracks/by-ids?${params}`, { signal })).map(toTrack);
 }
 
 export async function getFavorites(token: string, signal: AbortSignal) {

@@ -88,6 +88,10 @@ export function playbackApi(token: string, credentials: DeviceCredentials) {
       post('/command', { expectedVersion, command }, signal, keepalive),
     acknowledge: (expectedVersion: number, position: number | undefined, signal: AbortSignal) =>
       post('/ack', { expectedVersion, position }, signal),
+    removeDevice: async (deviceId: string, signal: AbortSignal) => {
+      const result = await fetchPlayback(`/devices/${encodeURIComponent(deviceId)}`, token, { method: 'DELETE', signal });
+      return result.json() as Promise<PlaybackSnapshot>;
+    },
     session: async (signal: AbortSignal) => {
       const result = await fetchPlayback('/session', token, { signal });
       return result.json() as Promise<PlaybackSnapshot>;

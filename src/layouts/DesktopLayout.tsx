@@ -6,6 +6,7 @@ import { Icon, IconButton, type IconName } from '../components/Controls';
 import { TrackArtwork } from '../components/TrackArtwork';
 import { SearchBar } from '../components/SearchBar';
 import { TrackRow } from '../components/TrackRow';
+import { TrackPageControls } from '../components/TrackPageControls';
 import FeaturedRelease from '../components/FeaturedRelease';
 import { PlaybackBar } from '../desktop/PlaybackBar';
 import type { LayoutProps } from './AppShell';
@@ -144,6 +145,8 @@ export default function DesktopLayout({ auth, favorites, library, search: catalo
   const loading = inQueue ? false : inFavorites ? favorites.favoritesLoading : term ? catalogSearch.loading : library.loading;
   const error = inQueue ? '' : inFavorites ? favorites.favoritesError : term ? catalogSearch.error : library.error;
   const retry = inFavorites ? favorites.reloadFavorites : term ? catalogSearch.retry : library.reload;
+  const trackPage = term ? catalogSearch : library;
+  const showPages = !overview && !inFavorites && !inQueue && !error && !loading;
   const title = term ? 'Результаты поиска' : pages[page];
   const showLogin = inFavorites && !authed;
   const rows =
@@ -228,7 +231,9 @@ export default function DesktopLayout({ auth, favorites, library, search: catalo
             <div className="du-heading">
               <h1>{title}</h1>
               {!overview && !loading && !error && !showLogin && (
-                <span className="du-count">{countTracks(tracks.length)}</span>
+                <span className="du-count">
+                  {showPages && trackPage.hasMore ? 'Показано ' : ''}{countTracks(tracks.length)}
+                </span>
               )}
             </div>
             {overview && !library.error && (
@@ -282,7 +287,7 @@ export default function DesktopLayout({ auth, favorites, library, search: catalo
             )}
             {!overview && !inQueue && tracks.length > 1 && (
               <label className="du-sort">
-                Сортировка
+                {showPages && trackPage.hasMore ? 'Сортировка загруженных треков' : 'Сортировка'}
                 <select value={sort} onChange={(e) => setSort(e.target.value)}>
                   <option value="newest">{inFavorites ? 'По умолчанию' : 'Сначала новые'}</option>
                   <option value="title">По названию</option>
@@ -364,6 +369,7 @@ export default function DesktopLayout({ auth, favorites, library, search: catalo
                 ))}
               </div>
             )}
+            {showPages && <TrackPageControls page={trackPage} language="ru" />}
           </div>
         </main>
       </div>
