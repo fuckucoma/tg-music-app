@@ -26,6 +26,7 @@ export interface PlaybackSnapshot {
   serverTime: number;
   session: {
     version: number;
+    timelineRevision?: string | null;
     activeDeviceId: string | null;
     pendingDeviceId: string | null;
     leaseUntil: number | null;
@@ -45,7 +46,7 @@ export interface PlaybackSnapshot {
 export type PlaybackCommand =
   | { type: 'play'; trackId?: number; queue?: number[]; position?: number }
   | { type: 'pause' | 'release'; position?: number }
-  | { type: 'seek'; position: number }
+  | { type: 'seek'; position: number; seekId?: string }
   | { type: 'next' | 'previous' }
   | { type: 'ended'; trackId: number }
   | { type: 'setShuffle'; shuffle: boolean }

@@ -89,22 +89,43 @@ test('unavailable Web Locks or storage never results in reuse of a copied device
 });
 
 function browser(t) {
+  const players = [];
+  const makePlayer = (id, tracks = [track]) => {
+    const player = new PlaybackSession('fixture', { deviceId: id, deviceKey: 'fixture-key' }, id, 'browser', 1, noop);
+    player.rememberCatalog(tracks);
+    player.start();
+    players.push(player);
+    return player;
+  };
+  t.after(() => { for (const player of players) player.dispose(false); });
   const host = Object.assign(new EventTarget(), { setTimeout: globalThis.setTimeout, setInterval, location: new URL(fixtureUrl) });
   const document = Object.assign(new EventTarget(), { hidden: false });
   const audible = new Set();
   const playCalls = [];
+  const seekCalls = [];
+  const pauseCalls = [];
+  const loadCalls = [];
   let nextError;
 
   class FakeAudio extends EventTarget {
     src = '';
-    currentTime = 0;
+    time = 0;
+    get currentTime() { return this.time; }
+    set currentTime(value) { this.time = value; seekCalls.push(value); }
     duration = 120;
     readyState = 4;
     playbackRate = 1;
     paused = true;
+    ended = false;
     error = null;
 
-    load() { this.dispatchEvent(new Event('durationchange')); }
+    load() {
+      loadCalls.push(this.src);
+      this.time = 0;
+      this.error = null;
+      this.ended = false;
+      this.dispatchEvent(new Event('durationchange'));
+    }
     play() {
       assert.ok(this.src, 'audio requires a real source');
       playCalls.push(this.src);
@@ -116,10 +137,12 @@ function browser(t) {
       audible.add(this);
       assert.equal(audible.size, 1, 'multiple audible outputs');
       this.paused = false;
+      this.ended = false;
       queueMicrotask(() => this.dispatchEvent(new Event('playing')));
       return Promise.resolve();
     }
     pause() {
+      pauseCalls.push(this.src);
       audible.delete(this);
       this.paused = true;
       this.dispatchEvent(new Event('pause'));
@@ -130,7 +153,7 @@ function browser(t) {
   setGlobal(t, 'window', host);
   setGlobal(t, 'document', document);
   setGlobal(t, 'Audio', FakeAudio);
-  return { host, document, audible, playCalls, blockNextPlay: () => {
+  return { host, document, audible, playCalls, seekCalls, pauseCalls, loadCalls, makePlayer, blockNextPlay: () => {
     nextError = new DOMException('User gesture required', 'NotAllowedError');
   } };
 }
@@ -160,20 +183,35 @@ test('AudioEngine plays only a prepared source and an authorized playback attemp
   engine.resume();
   assert.equal(engine.currentTime, 17);
   assert.equal(audible.size, 1);
+
+  const [audio] = audible;
+  audio.time = 24;
+  audio.error = { code: 2 };
+  audio.paused = true;
+  audible.delete(audio);
+  audio.dispatchEvent(new Event('error'));
+  engine.resume();
+  assert.equal(engine.currentTime, 24, 'reloading a failed source preserves its position');
+  assert.equal(audible.size, 1);
 });
 
-function server(t, audible, delayResponse) {
+function server(t, audible, delayRequest, delayResponse, legacy = false) {
   const devices = new Map();
   const streams = new Set();
+  const commands = [];
   const text = new TextEncoder();
   const session = {
     version: 0, activeDeviceId: null, pendingDeviceId: null, trackId: null, duration: 120,
-    position: 0, positionAt: 0, queue: [], queueIndex: -1, playing: false, shuffle: false, repeat: 'none',
+    position: 0, positionAt: 0, timelineRevision: null,
+    queue: [], queueIndex: -1, playing: false, shuffle: false, repeat: 'none',
   };
   let reachable = true;
+  let lastServerTime = 0;
   const status = () => {
-    const serverTime = Date.now();
-    return { serverTime, session: { ...session, leaseUntil: session.activeDeviceId && serverTime + 30_000 }, devices: [...devices.values()] };
+    const serverTime = lastServerTime = Math.max(Date.now(), lastServerTime + 1);
+    const snapshot = { ...session, leaseUntil: session.activeDeviceId && serverTime + 30_000 };
+    if (legacy) delete snapshot.timelineRevision;
+    return { serverTime, session: snapshot, devices: [...devices.values()] };
   };
   const emit = (snapshot = status()) => {
     for (const stream of streams) stream.enqueue(text.encode(`event: session\ndata: ${JSON.stringify(snapshot)}\n\n`));
@@ -193,8 +231,12 @@ function server(t, audible, delayResponse) {
       return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
     }
 
-    if (delayResponse) await delayResponse(url.pathname, parameters.signal);
     const body = parameters.body ? JSON.parse(parameters.body) : {};
+    if (body.command) commands.push(body.command);
+    if (delayRequest) {
+      const rejected = await delayRequest(url.pathname, parameters.signal, body);
+      if (rejected) return rejected;
+    }
     if (url.pathname === '/playback/devices') {
       devices.set(body.deviceId, { id: body.deviceId, name: body.name, online: true, platform: body.platform });
       emit();
@@ -202,6 +244,11 @@ function server(t, audible, delayResponse) {
       const { command, deviceId } = body;
       if (body.expectedVersion !== session.version) return Response.json({ snapshot: status() }, { status: 409 });
       if (command.type === 'play') {
+        if (session.trackId !== (command.trackId ?? session.trackId)) {
+          session.position = 0;
+          session.positionAt = Date.now();
+          session.timelineRevision = crypto.randomUUID();
+        }
         session.activeDeviceId ??= deviceId;
         session.trackId = command.trackId ?? session.trackId;
         session.queue = command.queue ?? session.queue;
@@ -212,6 +259,23 @@ function server(t, audible, delayResponse) {
       } else if (command.type === 'pause') {
         session.playing = false;
         session.position = command.position ?? session.position;
+        session.positionAt = Date.now();
+      } else if (command.type === 'seek') {
+        session.position = command.position;
+        session.positionAt = Date.now();
+        session.timelineRevision = command.seekId ?? crypto.randomUUID();
+      } else if (command.type === 'setShuffle') {
+        session.shuffle = command.shuffle;
+      } else if (command.type === 'setRepeat') {
+        session.repeat = command.repeat;
+      } else if (command.type === 'next' || command.type === 'ended') {
+        if (command.type === 'next' || session.repeat !== 'one') {
+          session.queueIndex = (session.queueIndex + 1) % session.queue.length;
+          session.trackId = session.queue[session.queueIndex];
+        }
+        session.position = 0;
+        session.positionAt = Date.now();
+        session.timelineRevision = crypto.randomUUID();
       }
       session.version++;
       emit();
@@ -223,10 +287,291 @@ function server(t, audible, delayResponse) {
       session.version++;
       emit();
     }
-    return Response.json(status());
+    const snapshot = status();
+    if (delayResponse) {
+      const rejected = await delayResponse(url.pathname, body, parameters.signal);
+      if (rejected) return rejected;
+    }
+    return Response.json(snapshot);
   });
-  return { session, status, emit, setReachable: (value) => { reachable = value; } };
+  return {
+    session, status, emit, commands,
+    get activeStreams() { return streams.size; },
+    setReachable: (value) => { reachable = value; },
+  };
 }
+
+test('a heartbeat received five seconds after it was sampled does not rewind audible playback', async (t) => {
+  const { host, audible, seekCalls, loadCalls, pauseCalls, playCalls, makePlayer } = browser(t);
+  let now = 0;
+  setGlobal(t, 'performance', { now: () => now });
+  let held;
+  let delayHeartbeat = false;
+  const api = server(t, audible, undefined, (path) => {
+    if (path === '/playback/heartbeat' && delayHeartbeat) {
+      return new Promise((resolve) => { held = resolve; });
+    }
+  });
+  const player = makePlayer('desktop');
+  await eventually(() => player.getView().devices.length, 'device registered');
+  player.play(track);
+  await eventually(() => player.getView().status === 'playing', 'playing');
+  await setImmediate();
+  const [audio] = audible;
+  const view = player.getView();
+  let viewUpdates = 0;
+  let progressUpdates = 0;
+  player.subscribe(() => viewUpdates++);
+  player.progress.subscribe(() => progressUpdates++);
+  const initialLoads = loadCalls.length;
+  seekCalls.length = 0;
+  audio.time = 60;
+  api.session.position = 60;
+  delayHeartbeat = true;
+  host.dispatchEvent(new Event('online'));
+  await eventually(() => held, 'heartbeat sampled');
+  now += 5_000;
+  audio.time = 65;
+  audio.dispatchEvent(new Event('timeupdate'));
+  held();
+  await setImmediate();
+  assert.equal(audio.currentTime, 65);
+  assert.deepEqual(seekCalls, []);
+  assert.equal(playCalls.length, 1);
+  assert.deepEqual(pauseCalls, []);
+  assert.equal(loadCalls.length, initialLoads);
+  assert.equal(player.getView(), view);
+  assert.equal(viewUpdates, 0);
+  assert.equal(progressUpdates, 1);
+  assert.equal(player.progress.get(), 65 / 120);
+});
+
+test('stale SSE, settings and roster changes preserve the local position, while remote Seek moves it', async (t) => {
+  const { audible, seekCalls, playCalls, makePlayer } = browser(t);
+  const api = server(t, audible);
+  const player = makePlayer('desktop');
+  const phone = makePlayer('phone');
+  await eventually(() => player.getView().devices.length === 2, 'devices registered');
+  player.play(track);
+  await eventually(() => phone.getView().status === 'playing' && audible.size === 1, 'playing');
+  const [audio] = audible;
+  const stale = api.status();
+  seekCalls.length = 0;
+  audio.time = 65;
+  api.session.position = 64.5;
+  phone.toggleShuffle();
+  await eventually(() => player.getView().shuffle, 'shuffle synchronized');
+  phone.cycleRepeat();
+  await eventually(() => player.getView().repeat === 'all', 'repeat synchronized');
+  const roster = makePlayer('tablet');
+  await eventually(() => roster.getView().devices.length === 3 && player.getView().devices.length === 3, 'roster synchronized');
+  api.emit(stale);
+  await setImmediate();
+  assert.equal(audio.currentTime, 65);
+  assert.deepEqual(seekCalls, []);
+  assert.equal(playCalls.length, 1);
+
+  phone.seek(35 / 120);
+  await eventually(() => seekCalls.length > 0, 'remote seek applied');
+  assert.ok(Math.abs(audio.currentTime - 35) < 0.1);
+  assert.equal(audible.size, 1);
+  seekCalls.length = 0;
+  audio.time = 40;
+  phone.play(track);
+  await eventually(() => player.getView().status === 'paused', 'remote pause applied');
+  assert.equal(audible.size, 0);
+  assert.equal(audio.currentTime, 40);
+  phone.play(track);
+  await eventually(() => player.getView().status === 'playing', 'remote resume applied');
+  assert.equal(audio.currentTime, 40);
+  assert.deepEqual(seekCalls, []);
+});
+
+test('seeking still works against a server that does not return a timeline revision', async (t) => {
+  const { audible, seekCalls, makePlayer } = browser(t);
+  server(t, audible, undefined, undefined, true);
+  const player = makePlayer('desktop');
+  await eventually(() => player.getView().devices.length, 'device registered');
+  player.play(track);
+  await eventually(() => player.getView().status === 'playing', 'playing');
+  seekCalls.length = 0;
+  player.seek(0.5);
+  assert.deepEqual(seekCalls, []);
+  await eventually(() => seekCalls.length === 1, 'legacy server seek applied');
+  assert.ok(Math.abs(seekCalls[0] - 60) < 0.1);
+});
+
+test('leased Play and Pause act synchronously, roll back failed requests, and honor a confirmed remote pause', async (t) => {
+  const { audible, pauseCalls, playCalls, makePlayer } = browser(t);
+  let gate;
+  const api = server(t, audible, (_path, _signal, body) => {
+    if (gate && body.command?.type === gate.type) return new Promise(resolve => { gate.release = resolve; });
+  });
+  const player = makePlayer('desktop');
+  await eventually(() => player.getView().devices.length, 'device registered');
+  player.play(track);
+  await eventually(() => player.getView().status === 'playing', 'playing');
+  await setImmediate();
+
+  gate = { type: 'pause' };
+  player.play(track);
+  assert.equal(player.getView().status, 'paused');
+  assert.equal(audible.size, 0);
+  assert.equal(pauseCalls.length, 1);
+  await eventually(() => gate.release, 'pause is in flight');
+  assert.equal(api.session.playing, true);
+  api.emit();
+  await setImmediate();
+  assert.equal(audible.size, 0, 'an unconfirmed heartbeat does not undo the local pause');
+  gate.release(Response.json({}, { status: 503 }));
+  await eventually(() => player.getView().notice && audible.size === 1, 'failed pause rolls back');
+  gate = null;
+
+  player.play(track);
+  await eventually(() => !api.session.playing && !player.getView().notice, 'second pause is confirmed');
+  gate = { type: 'play' };
+  player.play(track);
+  assert.equal(audible.size, 1);
+  assert.equal(playCalls.length, 3);
+  await eventually(() => gate.release, 'resume is in flight');
+  assert.equal(api.session.playing, false);
+  gate.release(Response.json({}, { status: 503 }));
+  await eventually(() => player.getView().notice && audible.size === 0, 'failed resume rolls back');
+  await eventually(() => player.getView().connection === 'online', 'connection recovered');
+
+  gate = { type: 'play' };
+  player.play(track);
+  assert.equal(audible.size, 1);
+  await eventually(() => gate.release, 'another resume is in flight');
+  api.session.version++;
+  api.emit();
+  await eventually(() => audible.size === 0, 'newer server pause stops optimistic audio');
+  gate.release();
+  await setImmediate();
+  assert.equal(api.session.playing, false);
+  assert.equal(audible.size, 0);
+});
+
+test('Media Session resumes an interrupted output and synchronizes its seek and pause', async (t) => {
+  const { audible, makePlayer } = browser(t);
+  const handlers = new Map();
+  setGlobal(t, 'navigator', {
+    mediaSession: { setActionHandler: (action, handler) => handlers.set(action, handler) },
+  });
+  const api = server(t, audible);
+  const player = makePlayer('desktop');
+  await eventually(() => player.getView().devices.length, 'device registered');
+  player.play(track);
+  await eventually(() => player.getView().status === 'playing', 'playing');
+  const [audio] = audible;
+  audio.pause();
+  assert.equal(api.session.playing, true);
+  assert.equal(audible.size, 0);
+  handlers.get('play')({ action: 'play' });
+  assert.equal(audible.size, 1);
+  handlers.get('seekto')({ action: 'seekto', seekTime: 37 });
+  assert.equal(audio.currentTime, 37);
+  handlers.get('pause')({ action: 'pause' });
+  assert.equal(audible.size, 0);
+  await eventually(() => !api.session.playing, 'Media Session pause synchronized');
+  assert.deepEqual(api.commands.slice(1).map(command => command.type), ['seek', 'pause']);
+  assert.equal(api.session.position, 37);
+});
+
+test('local scrubbing sends the final seek and its delayed acknowledgement cannot rewind it', async (t) => {
+  const { audible, seekCalls, makePlayer } = browser(t);
+  let release;
+  const api = server(t, audible, undefined, (_path, body) => {
+    if (body.command?.type === 'seek') return new Promise(resolve => { release = resolve; });
+  });
+  const player = makePlayer('desktop');
+  await eventually(() => player.getView().devices.length, 'device registered');
+  player.play(track);
+  await eventually(() => player.getView().status === 'playing', 'playing');
+  const [audio] = audible;
+  seekCalls.length = 0;
+  player.seek(0.25);
+  player.seek(0.5);
+  player.seek(0.75);
+  assert.equal(audio.currentTime, 90);
+  assert.deepEqual(seekCalls, [30, 60, 90]);
+  await eventually(() => release, 'seek received by the server');
+  await setImmediate();
+  assert.deepEqual(api.commands.filter(command => command.type === 'seek').map(command => command.position), [90]);
+  audio.time = 95;
+  release(Response.json({}, { status: 503 }));
+  await setImmediate();
+  assert.equal(audio.currentTime, 95, 'SSE already confirmed this seek before the HTTP error');
+  assert.deepEqual(seekCalls, [30, 60, 90]);
+  assert.equal(player.getView().notice, null);
+});
+
+test('a seek flushed before Next stays in order when another scrub is still pending', async (t) => {
+  const { audible, makePlayer } = browser(t);
+  let release;
+  const api = server(t, audible, (_path, _signal, body) => {
+    if (body.command?.type === 'setRepeat') return new Promise(resolve => { release = resolve; });
+  });
+  const second = { ...track, id: 9, streamUrl: `${fixtureUrl}/audio/9` };
+  const player = makePlayer('desktop', [track, second]);
+  await eventually(() => player.getView().devices.length, 'device registered');
+  player.play(track, [track, second]);
+  await eventually(() => player.getView().status === 'playing', 'playing');
+  player.cycleRepeat();
+  await eventually(() => release, 'a command is already in flight');
+
+  player.seek(0.25);
+  player.playNext();
+  player.seek(0.5);
+  release();
+  await eventually(() => player.getView().currentTrack?.id === second.id, 'Next executed in order');
+  await setTimeout(140);
+  assert.deepEqual(api.commands.slice(1).map(command => command.type), ['setRepeat', 'seek', 'next']);
+  assert.equal(api.commands[2].position, 30);
+});
+
+test('a phone changes the track on the leased desktop without opening another audio output', async (t) => {
+  const { audible, playCalls, loadCalls, makePlayer } = browser(t);
+  const api = server(t, audible);
+  const second = { ...track, id: 9, streamUrl: `${fixtureUrl}/audio/9` };
+  const desktop = makePlayer('desktop', [track, second]);
+  const phone = makePlayer('phone', [track, second]);
+  await eventually(() => phone.getView().devices.length === 2, 'both devices registered');
+  desktop.play(track, [track, second]);
+  await eventually(() => phone.getView().status === 'playing' && audible.size === 1, 'playing on desktop');
+  const [engine] = audible;
+  phone.playNext();
+  await eventually(() => desktop.getView().currentTrack?.id === second.id && engine.src === second.streamUrl, 'desktop advanced');
+  assert.equal(api.session.activeDeviceId, 'desktop');
+  assert.equal(phone.getView().mode, 'remote');
+  assert.equal(audible.size, 1);
+  assert.equal(audible.has(engine), true);
+  assert.deepEqual(playCalls, [track.streamUrl, second.streamUrl]);
+  assert.deepEqual(loadCalls, [track.streamUrl, second.streamUrl]);
+});
+
+test('a local seek after a natural track transition does not inherit the old ended state', async (t) => {
+  const { audible, seekCalls, makePlayer } = browser(t);
+  const api = server(t, audible);
+  const second = { ...track, id: 9, streamUrl: `${fixtureUrl}/audio/9` };
+  const player = makePlayer('desktop', [track, second]);
+  await eventually(() => player.getView().devices.length, 'device registered');
+  player.play(track, [track, second]);
+  await eventually(() => player.getView().status === 'playing', 'playing');
+  const [audio] = audible;
+  audio.paused = audio.ended = true;
+  audible.delete(audio);
+  audio.dispatchEvent(new Event('ended'));
+  await eventually(() => player.getView().currentTrack?.id === second.id && audible.has(audio), 'next track playing');
+
+  seekCalls.length = 0;
+  player.seek(0.5);
+  await eventually(() => api.session.position === 60, 'seek synchronized');
+  await setImmediate();
+  assert.deepEqual(seekCalls, [60]);
+  assert.equal(player.getView().status, 'playing');
+  assert.equal(audible.has(audio), true);
+});
 
 async function eventually(condition, label, timeout = 1_000) {
   const deadline = Date.now() + timeout;
@@ -249,7 +594,11 @@ test('Play can wait for a Render response that takes more than six seconds', asy
   try {
     await eventually(() => player.getView().devices.length === 1, 'device registered');
     player.play(track, [track]);
+    assert.equal(player.getView().pendingPlayTrackId, track.id);
+    await eventually(() => api.commands.length === 1, 'play request in flight');
+    assert.equal(audible.size, 0);
     await eventually(() => audible.size === 1, 'the delayed command granted playback', 9_000);
+    await eventually(() => player.getView().pendingPlayTrackId === null, 'loading state cleared');
     assert.equal(api.session.activeDeviceId, device.deviceId);
     assert.equal(player.getView().notice, null);
   } finally {
@@ -258,7 +607,7 @@ test('Play can wait for a Render response that takes more than six seconds', asy
 });
 
 test('two playback controllers hand off one engine, recover within a lease, and fail silent at expiry', async (t) => {
-  const { host, document, audible, playCalls, blockNextPlay } = browser(t);
+  const { host, document, audible, playCalls, seekCalls, blockNextPlay } = browser(t);
   const realNow = performance.now.bind(performance);
   let elapsed = 0;
   setGlobal(t, 'performance', { now: () => realNow() + elapsed });
@@ -290,6 +639,9 @@ test('two playback controllers hand off one engine, recover within a lease, and 
     second.retryPlayback();
     assert.equal(audible.size, 1, 'gesture plays the authorized source synchronously');
     await eventually(() => api.session.playing, 'resume synchronized');
+    const [audio] = audible;
+    seekCalls.length = 0;
+    audio.time = 45;
 
     api.setReachable(false);
     host.dispatchEvent(new Event('offline'));
@@ -299,10 +651,19 @@ test('two playback controllers hand off one engine, recover within a lease, and 
     host.dispatchEvent(new Event('online'));
     await eventually(() => second.getView().connection === 'online', 'connection recovered');
     assert.equal(audible.size, 1);
+    assert.equal(audio.currentTime, 45);
+    assert.deepEqual(seekCalls, []);
+    await eventually(() => api.activeStreams === 2, 'both SSE subscriptions recovered', 2_500);
+    first.toggleShuffle();
+    await eventually(() => second.getView().shuffle, 'remote controls still arrive after reconnecting');
+    assert.equal(audio.currentTime, 45);
+    assert.deepEqual(seekCalls, []);
 
     api.setReachable(false);
     host.dispatchEvent(new Event('offline'));
     elapsed = 31_000;
+    audio.dispatchEvent(new Event('timeupdate'));
+    assert.equal(audible.size, 0, 'media events enforce the lease even before a delayed timer fires');
     document.dispatchEvent(new Event('visibilitychange'));
     assert.equal(audible.size, 0, 'silence past the last confirmed permit');
     assert.equal(second.getView().mode, 'remote');

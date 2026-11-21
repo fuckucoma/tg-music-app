@@ -2,9 +2,10 @@ import { useState } from 'react';
 import type { Track } from '../types/track';
 import type { PlayerStatus } from '../types/track';
 import type { RepeatMode } from '../features/player/PlayerStore';
+import { usePlayerProgress } from '../features/player/PlayerProvider';
 
 interface Props {
-  track: Track; status: PlayerStatus; progress: number; duration: number; volume: number;
+  track: Track; status: PlayerStatus; duration: number; volume: number;
   shuffle: boolean; repeat: RepeatMode;
   remoteAudio?: boolean;
   outputName?: string;
@@ -19,10 +20,11 @@ const fmt = (s: number) => {
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 };
 
-export function MiniPlayer({ track, status, progress, duration, volume, shuffle, repeat, remoteAudio, outputName,
+export function MiniPlayer({ track, status, duration, volume, shuffle, repeat, remoteAudio, outputName,
   onPlayPause, onSeek, onNext, onPrev, onChangeVolume, onToggleShuffle, onCycleRepeat }: Props) {
 
   const [expanded, setExpanded] = useState(false);
+  const progress = usePlayerProgress();
   const isPlaying = status === 'playing';
   const isLoading = status === 'loading';
   const playLabel = isPlaying ? 'Pause' : 'Play';

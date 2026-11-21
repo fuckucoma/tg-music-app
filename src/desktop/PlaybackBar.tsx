@@ -1,5 +1,5 @@
 import { useRef, type CSSProperties } from 'react';
-import type { usePlayer } from '../features/player/PlayerProvider';
+import { usePlayerProgress, type usePlayer } from '../features/player/PlayerProvider';
 import { PlaybackDevices, PlaybackSessionNotice } from '../components/PlaybackDevices';
 import { Cover, Icon, IconButton, time } from './Controls';
 import './playback.css';
@@ -19,7 +19,7 @@ export function PlaybackBar({ player, onQueue, queueOpen, onStart, canStart }: P
   const outputName = remoteAudio
     ? player.devices.find((device) => device.id === player.activeDeviceId)?.name
     : undefined;
-  const progress = Number.isFinite(player.progress) ? Math.min(1, Math.max(0, player.progress)) : 0;
+  const progress = usePlayerProgress();
   const duration = Number.isFinite(player.duration) ? player.duration : 0;
   const toggleMute = () => {
     if (player.volume > 0) {
@@ -33,7 +33,9 @@ export function PlaybackBar({ player, onQueue, queueOpen, onStart, canStart }: P
       : player.repeat === 'all'
         ? 'Повтор очереди'
         : 'Повтор выключен';
-  const playLabel = player.status === 'playing' ? 'Пауза' : 'Воспроизвести';
+  const waitingForPlay = player.pendingPlayTrackId !== null &&
+    (!player.currentTrack || player.pendingPlayTrackId === player.currentTrack.id);
+  const playLabel = waitingForPlay ? 'Ожидание воспроизведения' : player.status === 'playing' ? 'Пауза' : 'Воспроизвести';
   return (
     <section className="du-player" aria-label="Плеер">
       <div className="du-now">
@@ -70,11 +72,14 @@ export function PlaybackBar({ player, onQueue, queueOpen, onStart, canStart }: P
             type="button"
             className="du-play"
             aria-label={playLabel}
+            aria-busy={waitingForPlay || undefined}
             title={playLabel}
             disabled={!hasTrack && !canStart}
             onClick={() => (player.currentTrack ? player.play(player.currentTrack) : onStart())}
           >
-            <Icon name={player.status === 'playing' ? 'pause' : 'play'} size={19} />
+            {waitingForPlay
+              ? <span aria-hidden="true" className="h-5 w-5 animate-spin-slow rounded-full border-2 border-current border-t-transparent" />
+              : <Icon name={player.status === 'playing' ? 'pause' : 'play'} size={19} />}
           </button>
           <IconButton
             icon="next"

@@ -3,6 +3,7 @@ import type { DeviceCredentials, DevicePlatform } from '../../services/playback'
 import type { PlayerStatus, Track } from '../../types/track';
 import { AudioEngine } from './AudioEngine';
 import { claimPlaybackIdentity } from './deviceIdentity';
+import { createPlaybackProgress } from './PlaybackProgress';
 import { initialPlaybackView, PlaybackSession } from './PlaybackSession';
 import {
   cycleRepeat, emptyQueue, nextTrack, previousTrack, selectTrack, toggleShuffle,
@@ -24,7 +25,7 @@ function savedVolume() {
 function useLocalPlayer(enabled: boolean) {
   const [queue, setQueue] = useState(emptyQueue);
   const [status, setStatus] = useState<PlayerStatus>('idle');
-  const [progress, setProgress] = useState(0);
+  const [progress] = useState(createPlaybackProgress);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(savedVolume);
   const queueRef = useRef(queue);
@@ -61,13 +62,13 @@ function useLocalPlayer(enabled: boolean) {
     if (!enabled) {
       updateQueue(emptyQueue);
       setStatus('idle');
-      setProgress(0);
+      progress.set(0);
       setDuration(0);
       return;
     }
     const engine = new AudioEngine({
       onStatus: setStatus,
-      onProgress: setProgress,
+      onProgress: progress.set,
       onDuration: setDuration,
       onEnded: () => {
         if (queueRef.current.repeat === 'one') engine.restart();
@@ -81,7 +82,7 @@ function useLocalPlayer(enabled: boolean) {
       engineRef.current = null;
       engine.dispose();
     };
-  }, [enabled, load, playNext, playPrev, updateQueue]);
+  }, [enabled, load, playNext, playPrev, progress, updateQueue]);
 
   const play = useCallback((track: Track, trackList?: Track[]) => {
     const currentQueue = queueRef.current;
@@ -130,6 +131,7 @@ const noop = () => {};
 const emptyCatalog: readonly Track[] = [];
 const initialView = () => initialPlaybackView;
 const subscribeIdle = () => noop;
+const idleProgress = createPlaybackProgress();
 
 export interface PlaybackOptions {
   token?: string | null;
@@ -227,6 +229,7 @@ export function usePlayerController({
 
   return {
     ...view,
+    progress: synced?.progress ?? idleProgress,
     deviceId: credentials?.deviceId ?? '',
     volume: local.volume,
     changeVolume: local.changeVolume,

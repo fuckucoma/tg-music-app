@@ -33,7 +33,8 @@ export class AudioEngine {
     this.listeners = {
       playing: () => {
         if (this.wantsPlayback && !this.audio.paused) {
-          this.setStatus('playing');
+          if (this.callbacks.canPlay?.() === false) this.pause();
+          else this.setStatus('playing');
         }
       },
       pause: () => {
@@ -46,7 +47,10 @@ export class AudioEngine {
           this.setStatus('loading');
         }
       },
-      timeupdate: () => this.updateProgress(),
+      timeupdate: () => {
+        if (this.wantsPlayback && this.callbacks.canPlay?.() === false) this.pause();
+        this.updateProgress();
+      },
       durationchange: () => {
         this.callbacks.onDuration(this.duration);
         if (this.pendingPosition !== null && this.duration) this.seekTo(this.pendingPosition);
@@ -132,7 +136,10 @@ export class AudioEngine {
 
   resume() {
     if (!this.hasTrack || this.wantsPlayback || this.callbacks.canPlay?.() === false) return;
-    if (this.audio.error) this.audio.load();
+    if (this.audio.error) {
+      if (this.pendingPosition === null && this.currentTime > 0) this.pendingPosition = this.currentTime;
+      this.audio.load();
+    }
     this.wantsPlayback = true;
     const requestId = ++this.requestId;
     this.setStatus('loading');

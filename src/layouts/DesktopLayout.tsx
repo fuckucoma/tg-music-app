@@ -354,7 +354,7 @@ export default function DesktopLayout({ auth, favorites, library, search: catalo
                     index={index}
                     track={track}
                     isActive={track.id === current?.id}
-                    status={track.id === current?.id ? player.status : 'idle'}
+                    status={track.id === player.pendingPlayTrackId ? 'loading' : track.id === current?.id ? player.status : 'idle'}
                     isFavorite={favorites.favoriteIds.has(track.id)}
                     favoritePending={favorites.pendingIds.has(track.id) || !favorites.canToggle}
                     onPlay={() => {

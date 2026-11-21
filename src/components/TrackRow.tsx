@@ -18,7 +18,7 @@ export function TrackRow({
   variant, track, isActive, status, isFavorite, favoritePending, index, onPlay, onToggleFavorite,
 }: Props) {
   const isPlaying = isActive && status === 'playing';
-  const isLoading = isActive && status === 'loading';
+  const isLoading = status === 'loading';
   const title = `${track.title} — ${track.artist}`;
   const playLabel = `${isPlaying ? 'Приостановить' : 'Слушать'} ${title}`;
   const favoriteLabel = `${isFavorite ? 'Убрать из избранного' : 'В избранное'}: ${track.title}`;
@@ -27,10 +27,12 @@ export function TrackRow({
   if (variant === 'desktop') {
     return (
       <div className={`du-trackrow${isActive ? ' active' : ''}`} role="listitem">
-        <button type="button" className="du-trackpick" aria-label={playLabel}
+        <button type="button" className="du-trackpick" aria-label={playLabel} aria-busy={isLoading || undefined}
           onClick={() => onPlay(track)}>
           <span className="du-num" aria-hidden="true">
-            {isPlaying ? <b>♫</b> : index === undefined ? null : String(index + 1).padStart(2, '0')}
+            {isLoading
+              ? <span className="inline-block h-3 w-3 animate-spin-slow rounded-full border-2 border-current border-t-transparent" />
+              : isPlaying ? <b>♫</b> : index === undefined ? null : String(index + 1).padStart(2, '0')}
           </span>
           <TrackArtwork track={track} />
           <span className="min-w-0">
@@ -53,7 +55,7 @@ export function TrackRow({
         className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left active:bg-surface/60"
         onClick={() => onPlay(track)}>
         <TrackArtwork track={track} variant="mobile" className="h-12 w-12 rounded-xl hover:opacity-80">
-          {isActive && (
+          {(isActive || isLoading) && (
             <span className="absolute inset-0 flex items-center justify-center bg-black/40 text-white">
               {isLoading
                 ? <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin-slow" />

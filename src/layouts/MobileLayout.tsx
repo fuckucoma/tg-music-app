@@ -105,7 +105,7 @@ export default function MobileLayout({ auth, favorites, library, search, hapticT
                 variant="mobile"
                 track={track}
                 isActive={current?.id === track.id}
-                status={current?.id === track.id ? player.status : 'idle'}
+                status={track.id === player.pendingPlayTrackId ? 'loading' : current?.id === track.id ? player.status : 'idle'}
                 isFavorite={favorites.favoriteIds.has(track.id)}
                 favoritePending={favorites.pendingIds.has(track.id) || !favorites.canToggle}
                 onPlay={() => { hapticTap(); player.play(track, rows); }}
@@ -122,8 +122,7 @@ export default function MobileLayout({ auth, favorites, library, search, hapticT
       {current && (
         <MiniPlayer
           track={current}
-          status={player.status}
-          progress={player.progress}
+          status={current.id === player.pendingPlayTrackId ? 'loading' : player.status}
           duration={player.duration}
           volume={player.volume}
           shuffle={player.shuffle}

@@ -5,6 +5,8 @@ import {
 } from '../../services/playback';
 import type { PlayerStatus, Track } from '../../types/track';
 import { AudioEngine } from './AudioEngine';
+import { newPlaybackId } from './deviceIdentity';
+import { createPlaybackProgress } from './PlaybackProgress';
 import type { RepeatMode } from './PlayerStore';
 
 const activeHeartbeatInterval = 6_500;
@@ -23,7 +25,6 @@ interface PlaybackView {
   queue: Track[];
   queueIndex: number;
   status: PlayerStatus;
-  progress: number;
   duration: number;
   shuffle: boolean;
   repeat: RepeatMode;
@@ -32,16 +33,26 @@ interface PlaybackView {
   devices: PlaybackDevice[];
   activeDeviceId: string | null;
   pendingDeviceId: string | null;
+  pendingPlayTrackId: number | null;
   needsGesture: boolean;
   removingDeviceId: string | null;
   notice: string | null;
 }
 
 export const initialPlaybackView: PlaybackView = {
-  currentTrack: null, queue: [], queueIndex: -1, status: 'idle', progress: 0, duration: 0,
+  currentTrack: null, queue: [], queueIndex: -1, status: 'idle', duration: 0,
   shuffle: false, repeat: 'none', mode: 'remote', connection: 'connecting', devices: [],
-  activeDeviceId: null, pendingDeviceId: null, needsGesture: false, removingDeviceId: null, notice: null,
+  activeDeviceId: null, pendingDeviceId: null, pendingPlayTrackId: null,
+  needsGesture: false, removingDeviceId: null, notice: null,
 };
+
+function sameDevices(a: PlaybackDevice[], b: PlaybackDevice[]) {
+  return a.length === b.length && a.every((device, index) => {
+    const previous = b[index];
+    return device.id === previous.id && device.name === previous.name &&
+      device.platform === previous.platform && device.online === previous.online;
+  });
+}
 
 function isNewer(snapshot: PlaybackSnapshot, previous: PlaybackSnapshot | null) {
   if (!previous) return true;
@@ -52,7 +63,17 @@ function isNewer(snapshot: PlaybackSnapshot, previous: PlaybackSnapshot | null) 
   const anchor = snapshot.session.positionAt ?? 0;
   const previousAnchor = previous.session.positionAt ?? 0;
   if (anchor !== previousAnchor) return anchor > previousAnchor;
-  return snapshot.serverTime >= previous.serverTime;
+  if (snapshot.serverTime !== previous.serverTime) return snapshot.serverTime > previous.serverTime;
+  return !sameDevices(snapshot.devices, previous.devices);
+}
+
+function sameTimeline(a: PlaybackSnapshot['session'], b: PlaybackSnapshot['session']) {
+  if (a.trackId !== b.trackId || a.activeDeviceId !== b.activeDeviceId) return false;
+  if (a.timelineRevision !== undefined && b.timelineRevision !== undefined) {
+    return a.timelineRevision === b.timelineRevision;
+  }
+  // Legacy servers have no independent marker for a same-track seek.
+  return a.version === b.version || a.positionAt === b.positionAt;
 }
 
 function leaseRemaining(snapshot: PlaybackSnapshot) {
@@ -60,15 +81,18 @@ function leaseRemaining(snapshot: PlaybackSnapshot) {
 }
 
 type Operation = (signal: AbortSignal) => Promise<PlaybackSnapshot>;
+type CreateCommand = (snapshot: PlaybackSnapshot) => PlaybackCommand | null;
+type SeekIntent = { id: string; trackId: number; position: number; local: boolean; epoch: number };
 
 export class PlaybackSession {
   private readonly api;
   private readonly abort = new AbortController();
   private readonly tracks = new Map<number, Track>();
   private readonly listeners = new Set<() => void>();
+  readonly progress = createPlaybackProgress();
   private view = initialPlaybackView;
   private snapshot: PlaybackSnapshot | null = null;
-  private receivedAt = 0;
+  private serverOffset = -Infinity;
   private leaseDeadline = 0;
   private leaseTimer = 0;
   private claimTimer = 0;
@@ -79,6 +103,7 @@ export class PlaybackSession {
   private engine: AudioEngine | null = null;
   private engineTrackId: number | null = null;
   private engineStatus: PlayerStatus = 'idle';
+  private engineShouldPlay = false;
   private engineDuration = 0;
   private needsGesture = false;
   private registered = false;
@@ -94,8 +119,13 @@ export class PlaybackSession {
   private catalogRequestPending = false;
   private readonly unavailableTracks = new Set<number>();
   private lastReportAt = -Infinity;
-  private endedVersion: number | null = null;
-  private deferredSeek: { trackId: number; position: number } | null = null;
+  private endedSession: PlaybackSnapshot['session'] | null = null;
+  private deferredSeek: SeekIntent | null = null;
+  private pendingSeek: SeekIntent | null = null;
+  private seekInFlight: string | null = null;
+  private seekEpoch = 0;
+  private transport: { version: number; playing: boolean } | null = null;
+  private pendingPlay: { trackId: number } | null = null;
   private suspended = false;
   private generation = 0;
   private connection: PlaybackConnection = 'connecting';
@@ -168,35 +198,37 @@ export class PlaybackSession {
   };
 
   retryPlayback = () => {
-    if (!this.hasLease() || !this.engine) return;
-    const trackId = this.engineTrackId;
-    const position = this.engineDuration ? this.engine.currentTime : this.position();
-    const wasBlocked = this.needsGesture;
-    this.needsGesture = false;
-    this.endedVersion = null;
-    this.engine.resume();
-    this.send((snapshot) => this.hasLease() && snapshot.session.trackId === trackId && (wasBlocked || !this.isPlaying(snapshot))
-      ? { type: 'play', position } : null, () => this.applyAudio());
-    this.publish();
+    if (this.hasLease() && this.engineTrackId !== null) this.setPlaying(this.engineTrackId, true, true);
   };
 
   play = (track: Track, trackList?: Track[]) => {
-    if (this.engineTrackId === track.id && this.hasLease() && this.snapshot &&
-      (this.needsGesture || this.engineStatus === 'error' || !this.isPlaying(this.snapshot))) {
-      this.retryPlayback();
+    if (this.engineTrackId === track.id && this.hasLease() && this.snapshot) {
+      const playing = this.transportPlaying(this.snapshot) ?? this.isPlaying(this.snapshot);
+      const retry = this.needsGesture || this.engineStatus === 'error' ||
+        (playing && this.engineStatus === 'paused' && !this.transport && !this.endedSession);
+      this.setPlaying(track.id, retry || !playing, retry);
       return;
     }
     for (const item of trackList ?? []) this.tracks.set(item.id, item);
     this.tracks.set(track.id, track);
+    if (this.pendingPlay?.trackId === track.id) return;
+    const pending = !this.snapshot || this.snapshot.session.trackId !== track.id || !this.isPlaying(this.snapshot)
+      ? { trackId: track.id } : null;
+    if (pending) {
+      this.pendingPlay = pending;
+      this.publish();
+    }
 
     this.send((snapshot) => {
       if (snapshot.session.trackId === track.id) {
-        return this.isPlaying(snapshot) ? this.pauseCommand() : { type: 'play' };
+        return this.isPlaying(snapshot) ? { type: 'pause' } : { type: 'play' };
       }
       const ids = [...new Set((trackList ?? this.view.queue).map((item) => item.id))];
       if (!ids.includes(track.id)) ids.push(track.id);
       const start = Math.max(0, Math.min(ids.indexOf(track.id), ids.length - queueLimit));
       return { type: 'play', trackId: track.id, queue: ids.slice(start, start + queueLimit) };
+    }, () => {
+      if (this.pendingPlay === pending) this.pendingPlay = null;
     });
   };
 
@@ -225,30 +257,88 @@ export class PlaybackSession {
   };
 
   private queueSeek(position: number) {
-    const trackId = this.snapshot?.session.trackId;
+    const session = this.snapshot?.session;
+    const trackId = session?.trackId;
     if (trackId == null || !this.view.duration || !Number.isFinite(position)) return;
-    this.deferredSeek = { trackId, position: Math.max(0, Math.min(this.view.duration, position)) };
-    if (this.hasLease()) this.engine?.seekTo(this.deferredSeek.position);
-    this.publish();
+    const seek: SeekIntent = {
+      trackId, id: newPlaybackId(), position: Math.max(0, Math.min(this.view.duration, position)),
+      local: session?.timelineRevision !== undefined && this.hasLease() && this.engineTrackId === trackId,
+      epoch: this.seekEpoch,
+    };
+    this.pendingSeek = this.deferredSeek = seek;
+    if (seek.local) this.engine?.seekTo(seek.position);
+    this.publishProgress();
     clearTimeout(this.seekTimer);
-    this.seekTimer = window.setTimeout(() => {
-      const seek = this.deferredSeek;
-      this.deferredSeek = null;
-      if (seek) this.send(({ session }) => session.trackId === seek.trackId
-        ? { type: 'seek', position: seek.position } : null);
-    }, 120);
+    this.seekTimer = window.setTimeout(this.flushSeek, 120);
   }
 
-  private pauseCommand(): PlaybackCommand {
-    return { type: 'pause', position: this.hasLease() ? this.engine?.currentTime : undefined };
+  private flushSeek = () => {
+    const seek = this.deferredSeek;
+    if (!seek) return;
+    clearTimeout(this.seekTimer);
+    this.deferredSeek = null;
+    this.enqueue(({ session }) => {
+      if (seek.epoch !== this.seekEpoch || session.trackId !== seek.trackId || session.pendingDeviceId ||
+        (seek.local && !this.hasLease())) return null;
+      this.seekInFlight = seek.id;
+      return { type: 'seek', position: seek.position, seekId: seek.id };
+    }, (failed) => {
+      if (this.seekInFlight === seek.id) this.seekInFlight = null;
+      if (this.pendingSeek !== seek) return;
+      this.pendingSeek = null;
+      if (failed && seek.local) {
+        this.applyAudio(true);
+        this.refreshSoon();
+      }
+      this.publishProgress();
+    }, true);
+  };
+
+  private cancelSeeks() {
+    this.seekEpoch++;
+    this.pendingSeek = this.deferredSeek = null;
+    clearTimeout(this.seekTimer);
+  }
+
+  private transportPlaying(snapshot: PlaybackSnapshot) {
+    return this.transport?.version === snapshot.session.version ? this.transport.playing : undefined;
+  }
+
+  private setPlaying(trackId: number, playing: boolean, retry = false) {
+    const base = this.snapshot?.session;
+    const local = base && this.hasLease() && this.engineTrackId === trackId;
+    const position = local && this.engineDuration ? this.engine?.currentTime : undefined;
+    const intent = local ? { version: base.version, playing } : null;
+    if (intent) {
+      this.transport = intent;
+      if (playing) {
+        this.needsGesture = false;
+        this.endedSession = null;
+      }
+      this.applyAudio(false, retry);
+      this.publish();
+    }
+    this.send((snapshot) => {
+      if (snapshot.session.trackId !== trackId || (local && !this.hasLease())) return null;
+      if (playing === this.isPlaying(snapshot)) return null;
+      if (playing) return { type: 'play' };
+      return { type: 'pause', position: base && sameTimeline(base, snapshot.session) ? position : undefined };
+    }, (failed) => {
+      if (intent && this.transport === intent) {
+        this.transport = null;
+        this.applyAudio();
+      }
+      if (failed) this.refreshSoon();
+    });
   }
 
   private get serverNow() {
-    return (this.snapshot?.serverTime ?? 0) + (performance.now() - this.receivedAt);
+    return this.serverOffset + performance.now();
   }
 
   private isPlaying({ session }: PlaybackSnapshot) {
-    return session.playing && !session.pendingDeviceId && (session.leaseUntil ?? 0) > this.serverNow;
+    return session.playing && !session.pendingDeviceId &&
+      (this.hasLease() || (session.leaseUntil ?? 0) > this.serverNow);
   }
 
   private hasLease() {
@@ -274,8 +364,13 @@ export class PlaybackSession {
 
   private tick = () => {
     if (!this.running) return;
-    if (this.engine && !this.hasLease()) this.stopAudio();
-    if (this.snapshot && !this.engine && this.snapshot.session.playing) this.publish();
+    if (this.engine && !this.hasLease()) {
+      this.stopAudio();
+      this.publish();
+    } else if (!this.engine && this.snapshot) {
+      if (this.view.activeDeviceId && (this.snapshot.session.leaseUntil ?? 0) <= this.serverNow) this.publish();
+      else this.publishProgress();
+    }
   };
 
   private online = () => {
@@ -302,11 +397,13 @@ export class PlaybackSession {
     this.suspended = true;
     this.generation++;
     this.leaseDeadline = 0;
-    this.deferredSeek = null;
+    this.cancelSeeks();
+    this.seekInFlight = null;
+    this.transport = null;
+    this.pendingPlay = null;
     clearTimeout(this.heartbeatTimer);
     clearTimeout(this.leaseTimer);
     clearTimeout(this.claimTimer);
-    clearTimeout(this.seekTimer);
     clearTimeout(this.reconnectTimer);
     this.eventsAbort?.abort();
     if (release && hasLease && session) {
@@ -331,6 +428,9 @@ export class PlaybackSession {
         registrationError = await this.request((signal) => this.api.register(this.deviceLabel, this.platform, signal), false, () => {
           this.registered = true;
         });
+        // A new controller already has a snapshot. Only the current output
+        // needs an immediate heartbeat to confirm its existing lease.
+        if (this.registered && this.snapshot && this.snapshot.session.activeDeviceId !== this.deviceId) return;
       }
       if (this.registered) {
         const report = this.getReport();
@@ -382,6 +482,7 @@ export class PlaybackSession {
     const session = this.snapshot?.session;
     if (!session || session.trackId === null || !this.hasLease() || !this.engine ||
       this.engineTrackId !== session.trackId || this.engineStatus !== 'playing' ||
+      this.pendingSeek || this.seekInFlight || this.transport || !session.playing ||
       performance.now() - this.lastReportAt < 12_000) return undefined;
     return { trackId: session.trackId, version: session.version, position: this.engine.currentTime };
   }
@@ -463,7 +564,12 @@ export class PlaybackSession {
     }
   }
 
-  private send(createCommand: (snapshot: PlaybackSnapshot) => PlaybackCommand | null, onFailure?: () => void) {
+  private send(createCommand: CreateCommand, onSettled?: (failed: boolean) => void, retryConflict = false) {
+    this.flushSeek();
+    this.enqueue(createCommand, onSettled, retryConflict);
+  }
+
+  private enqueue(createCommand: CreateCommand, onSettled?: (failed: boolean) => void, retryConflict = false) {
     const generation = this.generation;
     this.commands = this.commands.catch(() => {}).then(async () => {
       if (!this.running || generation !== this.generation) return;
@@ -471,16 +577,28 @@ export class PlaybackSession {
       if (!this.running || generation !== this.generation) return;
       if (!this.registered || !this.snapshot) {
         this.notice = 'Не удалось связаться с плеером. Попробуйте ещё раз.';
+        onSettled?.(true);
         this.publish();
         return;
       }
-      const command = createCommand(this.snapshot);
-      if (!command) return;
-      const version = this.snapshot.session.version;
-      const error = await this.request((signal) => this.api.command(version, command, signal), true);
+      const base = this.snapshot;
+      const execute = async (snapshot: PlaybackSnapshot) => {
+        const command = createCommand(snapshot);
+        if (!command) return;
+        const error = await this.request((signal) => this.api.command(snapshot.session.version, command, signal), true);
+        if (command.type === 'seek' && command.seekId && this.snapshot?.session.timelineRevision === command.seekId) return;
+        return error;
+      };
+      let error = await execute(base);
+      const current = this.snapshot;
+      if (retryConflict && error instanceof PlaybackApiError && error.status === 409 &&
+        this.running && generation === this.generation && current && current.session.version > base.session.version &&
+        sameTimeline(base.session, current.session) && current.session.pendingDeviceId === base.session.pendingDeviceId) {
+        error = await execute(current);
+      }
       if (!this.running || generation !== this.generation) return;
-      if (error) onFailure?.();
       this.notice = error ? 'Не удалось применить действие. Попробуйте ещё раз.' : null;
+      onSettled?.(Boolean(error));
       this.publish();
     });
   }
@@ -489,19 +607,37 @@ export class PlaybackSession {
     if (!Number.isSafeInteger(snapshot?.session?.version) || !Number.isFinite(snapshot?.serverTime) ||
       !Array.isArray(snapshot.session.queue) || !Array.isArray(snapshot.devices)) return;
     const previous = this.snapshot;
-    if (isNewer(snapshot, previous)) {
+    const wasLeased = this.hasLease();
+    const fresh = isNewer(snapshot, previous);
+    if (!fresh && startedAt === undefined) return;
+    if (fresh) {
       this.snapshot = snapshot;
-      this.receivedAt = performance.now();
+      // Each receive gives a lower bound on server time. A slower response
+      // cannot set the clock back or reset the age of a delayed snapshot.
+      this.serverOffset = Math.max(this.serverOffset, snapshot.serverTime - performance.now());
     }
     const current = this.snapshot!;
     const { session } = current;
     const own = session.activeDeviceId === this.deviceId;
-    const handoff = own && session.pendingDeviceId && (session.leaseUntil ?? 0) > this.serverNow;
-    const stillActive = own && !session.pendingDeviceId && (session.leaseUntil ?? 0) > this.serverNow;
+    const live = (session.leaseUntil ?? 0) > current.serverTime;
+    const handoff = own && session.pendingDeviceId && live;
+    const stillActive = own && !session.pendingDeviceId && live;
     this.connection = 'online';
+    if (this.transport && this.transport.version !== session.version) this.transport = null;
+    const moved = previous !== null && !sameTimeline(previous.session, session);
+    const ownSeek = moved && this.seekInFlight !== null && session.timelineRevision === this.seekInFlight;
+    const unconfirmedSeek = this.pendingSeek?.local && session.timelineRevision !== this.pendingSeek.id;
+    if (moved && this.endedSession) {
+      this.endedSession = ownSeek && sameTimeline(this.endedSession, previous.session) ? session : null;
+    }
+    if ((moved && !ownSeek) || session.pendingDeviceId || (wasLeased && !stillActive)) {
+      this.cancelSeeks();
+    }
 
     if (handoff) {
-      this.ackPosition = this.stopAudio(session.trackId) ?? this.ackPosition;
+      const position = this.stopAudio(session.trackId);
+      if ((moved && !ownSeek) || unconfirmedSeek) this.ackPosition = undefined;
+      else this.ackPosition = position ?? this.ackPosition;
       this.leaseDeadline = 0;
       this.acknowledge(current);
     } else if (!stillActive) {
@@ -531,7 +667,7 @@ export class PlaybackSession {
     }
 
     this.resolveTracks();
-    this.applyAudio(previous?.session.version !== session.version);
+    this.applyAudio(moved && !ownSeek);
     this.publish();
   }
 
@@ -571,32 +707,34 @@ export class PlaybackSession {
     });
   }
 
-  private applyAudio(timelineChanged = false) {
+  private applyAudio(movePosition = false, retry = false) {
     const snapshot = this.snapshot;
     if (!snapshot || !this.hasLease()) {
       this.stopAudio();
       return;
     }
-    const { trackId, version } = snapshot.session;
+    const { trackId } = snapshot.session;
     const track = trackId === null ? undefined : this.tracks.get(trackId);
     if (!track) {
       this.stopAudio();
       return;
     }
-    const playing = this.isPlaying(snapshot) && this.endedVersion !== version;
-    const position = this.deferredSeek?.trackId === track.id ? this.deferredSeek.position : this.position();
+    const ended = this.endedSession !== null && sameTimeline(this.endedSession, snapshot.session);
+    const playing = (this.transportPlaying(snapshot) ?? this.isPlaying(snapshot)) && !ended;
     const engine = this.engine ?? this.createEngine();
     if (this.engineTrackId !== track.id) {
       this.engineTrackId = track.id;
       this.needsGesture = false;
-      engine.load(track, { position, playing });
+      this.engineShouldPlay = playing;
+      engine.load(track, { position: this.position(), playing });
       return;
     }
-    const acceptableDrift = timelineChanged ? 0.1 : playing ? 1.5 : 0.25;
-    if (Math.abs(engine.currentTime - position) > acceptableDrift) engine.seekTo(position);
+    if (movePosition) engine.seekTo(this.position());
+    if (playing === this.engineShouldPlay && !retry) return;
+    this.engineShouldPlay = playing;
     if (!playing && this.engineStatus !== 'paused') {
       engine.pause();
-    } else if (playing && !this.needsGesture && this.engineStatus !== 'error') engine.resume();
+    } else if (playing && !this.needsGesture && (retry || this.engineStatus !== 'error')) engine.resume();
   }
 
   private createEngine() {
@@ -612,28 +750,31 @@ export class PlaybackSession {
         this.engineDuration = duration;
         this.publish();
       },
-      onProgress: () => { if (this.engine === engine) this.publish(); },
+      onProgress: () => { if (this.engine === engine) this.publishProgress(); },
       onEnded: () => {
         if (this.engine !== engine || !this.hasLease() || !this.snapshot || this.engineTrackId === null) return;
         const trackId = this.engineTrackId;
-        const version = this.snapshot.session.version;
-        this.endedVersion = version;
-        this.send(({ session }) => this.hasLease() && session.version === version ? { type: 'ended', trackId } : null);
+        const ended = this.snapshot.session;
+        const seekId = this.pendingSeek?.id;
+        this.endedSession = ended;
+        this.engineShouldPlay = false;
+        this.send(({ session }) => this.hasLease() &&
+          (sameTimeline(ended, session) || (seekId !== undefined && session.timelineRevision === seekId))
+          ? { type: 'ended', trackId } : null, undefined, true);
       },
       onPlaybackBlocked: () => {
         if (this.engine !== engine) return;
         this.needsGesture = true;
         const trackId = this.engineTrackId;
         const position = this.engineDuration ? engine.currentTime : this.position();
-        this.send((snapshot) => this.hasLease() && snapshot.session.trackId === trackId && this.isPlaying(snapshot)
+        this.send((snapshot) => this.needsGesture && this.hasLease() && snapshot.session.trackId === trackId && this.isPlaying(snapshot)
           ? { type: 'pause', position } : null);
         this.publish();
       },
-      onMediaPlay: () => {
-        if (this.needsGesture) this.retryPlayback();
-        else this.send(() => ({ type: 'play' }));
+      onMediaPlay: this.retryPlayback,
+      onMediaPause: () => {
+        if (this.engineTrackId !== null) this.setPlaying(this.engineTrackId, false);
       },
-      onMediaPause: () => this.send(() => this.pauseCommand()),
       onMediaSeek: (position) => this.queueSeek(position),
       onNext: this.playNext,
       onPrevious: this.playPrev,
@@ -649,9 +790,12 @@ export class PlaybackSession {
     this.engine = null;
     this.engineTrackId = null;
     this.engineStatus = 'idle';
+    this.engineShouldPlay = false;
     this.engineDuration = 0;
     this.needsGesture = false;
-    this.endedVersion = null;
+    this.endedSession = null;
+    this.transport = null;
+    if (this.pendingSeek?.local) this.cancelSeeks();
     engine.dispose();
     return position;
   }
@@ -670,20 +814,35 @@ export class PlaybackSession {
       ? previousQueue : resolvedQueue;
     const local = this.hasLease();
     const duration = (local ? this.engineDuration : 0) || session?.duration || currentTrack?.duration || 0;
-    const position = this.deferredSeek && this.deferredSeek.trackId === trackId
-      ? this.deferredSeek.position : local && this.engine ? this.engine.currentTime : this.position();
     const remotePlaying = snapshot && this.isPlaying(snapshot);
+    const devices = snapshot?.devices ?? initialPlaybackView.devices;
+    const status = currentTrack ? local && this.engine ? this.engineStatus : remotePlaying ? 'playing' : 'paused' : 'idle';
+    const pendingPlayTrackId = this.pendingPlay?.trackId ?? null;
 
-    this.view = {
+    const next: PlaybackView = {
       currentTrack, queue, queueIndex: queue.findIndex((track) => track.id === trackId),
-      status: currentTrack ? local && this.engine ? this.engineStatus : remotePlaying ? 'playing' : 'paused' : 'idle',
-      progress: duration ? Math.min(1, Math.max(0, position / duration)) : 0,
+      status,
       duration, shuffle: session?.shuffle ?? false, repeat: session?.repeat ?? 'none',
-      mode: local ? 'active' : 'remote', connection: this.connection, devices: snapshot?.devices ?? [],
-      activeDeviceId: (session?.leaseUntil ?? 0) > this.serverNow ? session?.activeDeviceId ?? null : null,
-      pendingDeviceId: session?.pendingDeviceId ?? null, needsGesture: this.needsGesture,
+      mode: local ? 'active' : 'remote', connection: this.connection,
+      devices: sameDevices(this.view.devices, devices) ? this.view.devices : devices,
+      activeDeviceId: local || (session?.leaseUntil ?? 0) > this.serverNow ? session?.activeDeviceId ?? null : null,
+      pendingDeviceId: session?.pendingDeviceId ?? null,
+      pendingPlayTrackId: trackId === pendingPlayTrackId && (status === 'playing' || this.needsGesture) ? null : pendingPlayTrackId,
+      needsGesture: this.needsGesture,
       removingDeviceId: this.removingDeviceId, notice: this.notice,
     };
-    for (const listener of this.listeners) listener();
+    if ((Object.keys(next) as (keyof PlaybackView)[]).some(key => this.view[key] !== next[key])) {
+      this.view = next;
+      for (const listener of this.listeners) listener();
+    }
+    this.publishProgress();
+  }
+
+  private publishProgress() {
+    const { duration } = this.view;
+    const seek = this.pendingSeek;
+    const position = this.hasLease() && this.engine && this.engineDuration
+      ? this.engine.currentTime : seek?.position ?? this.position();
+    this.progress.set(duration ? Math.min(1, Math.max(0, position / duration)) : 0);
   }
 }
