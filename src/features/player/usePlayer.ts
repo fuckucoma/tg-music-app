@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import type { DevicePlatform } from '../../services/playback';
 import type { PlayerStatus, Track } from '../../types/track';
 import { AudioEngine } from './AudioEngine';
+import { createPlaybackDevice, initialPlaybackView, PlaybackSession } from './PlaybackSession';
 import {
   cycleRepeat, emptyQueue, nextTrack, previousTrack, selectTrack, toggleShuffle,
   type PlaybackQueue,
@@ -14,7 +16,7 @@ function savedVolume() {
   return Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 1;
 }
 
-export function usePlayerController() {
+function useLocalPlayer(enabled: boolean) {
   const [queue, setQueue] = useState(emptyQueue);
   const [status, setStatus] = useState<PlayerStatus>('idle');
   const [progress, setProgress] = useState(0);
@@ -50,7 +52,14 @@ export function usePlayerController() {
     load(previousTrack(queueRef.current));
   }, [load]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!enabled) {
+      updateQueue(emptyQueue);
+      setStatus('idle');
+      setProgress(0);
+      setDuration(0);
+      return;
+    }
     const engine = new AudioEngine({
       onStatus: setStatus,
       onProgress: setProgress,
@@ -67,7 +76,7 @@ export function usePlayerController() {
       engineRef.current = null;
       engine.dispose();
     };
-  }, [load, playNext, playPrev]);
+  }, [enabled, load, playNext, playPrev, updateQueue]);
 
   const play = useCallback((track: Track, trackList?: Track[]) => {
     const currentQueue = queueRef.current;
@@ -109,6 +118,82 @@ export function usePlayerController() {
     changeVolume,
     toggleShuffle: handleShuffle,
     cycleRepeat: handleRepeat,
+  };
+}
+
+const noop = () => {};
+const emptyCatalog: readonly Track[] = [];
+const initialView = () => initialPlaybackView;
+const subscribeIdle = () => noop;
+
+export interface PlaybackOptions {
+  token?: string | null;
+  userId?: number | null;
+  deviceLabel?: string;
+  platform?: DevicePlatform;
+  catalog?: readonly Track[];
+  onSessionExpired?: (error: unknown, token: string) => void;
+}
+
+export function usePlayerController({
+  token = null, userId = null, deviceLabel = 'Web', platform = 'browser',
+  catalog = emptyCatalog, onSessionExpired,
+}: PlaybackOptions) {
+  const authenticated = token !== null && userId !== null;
+  const guest = useLocalPlayer(!authenticated);
+  const credentials = useMemo(createPlaybackDevice, [userId]);
+  const [connection, setConnection] = useState<{
+    credentials: typeof credentials;
+    session: PlaybackSession;
+  } | null>(null);
+  const latest = useRef({ catalog, volume: guest.volume, onSessionExpired });
+  useLayoutEffect(() => {
+    latest.current = { catalog, volume: guest.volume, onSessionExpired };
+  }, [catalog, guest.volume, onSessionExpired]);
+
+  useLayoutEffect(() => {
+    if (token === null || userId === null) {
+      setConnection(null);
+      return;
+    }
+    const session = new PlaybackSession(token, credentials, deviceLabel, platform, latest.current.volume,
+      (error, expiredToken) => latest.current.onSessionExpired?.(error, expiredToken));
+    session.rememberCatalog(latest.current.catalog);
+    session.start();
+    setConnection({ credentials, session });
+    return () => session.dispose();
+  }, [credentials, deviceLabel, platform, token, userId]);
+
+  const synced = connection?.credentials === credentials && connection.session.token === token ? connection.session : null;
+  useLayoutEffect(() => { synced?.rememberCatalog(catalog); }, [catalog, synced]);
+  useLayoutEffect(() => { synced?.setVolume(guest.volume); }, [guest.volume, synced]);
+
+  const view = useSyncExternalStore(synced?.subscribe ?? subscribeIdle, synced?.getView ?? initialView);
+  if (!authenticated) return {
+    ...initialPlaybackView,
+    ...guest,
+    mode: 'local' as const,
+    connection: 'idle' as const,
+    deviceId: credentials.deviceId,
+    takeOver: noop,
+    clearNotice: noop,
+    retryPlayback: noop,
+  };
+
+  return {
+    ...view,
+    deviceId: credentials.deviceId,
+    volume: guest.volume,
+    changeVolume: guest.changeVolume,
+    play: synced?.play ?? noop,
+    playNext: synced?.playNext ?? noop,
+    playPrev: synced?.playPrev ?? noop,
+    toggleShuffle: synced?.toggleShuffle ?? noop,
+    cycleRepeat: synced?.cycleRepeat ?? noop,
+    seek: synced?.seek ?? noop,
+    takeOver: synced?.takeOver ?? noop,
+    clearNotice: synced?.clearNotice ?? noop,
+    retryPlayback: synced?.retryPlayback ?? noop,
   };
 }
 

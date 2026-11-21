@@ -1,5 +1,7 @@
 import { AccountDialog } from '../features/auth/AccountDialog';
 import { MiniPlayer } from '../components/MiniPlayer';
+import { Icon } from '../components/Controls';
+import { PlaybackDevices, PlaybackSessionNotice } from '../components/PlaybackDevices';
 import { ProfilePanel } from '../components/ProfilePanel';
 import { SearchBar } from '../components/SearchBar';
 import { TrackRow } from '../components/TrackRow';
@@ -9,39 +11,48 @@ import type { LayoutProps } from './AppShell';
 
 export default function MobileLayout({ auth, favorites, library, search, hapticTap }: LayoutProps) {
   const player = usePlayer();
-  const [tab, setTab] = useState<'all' | 'favorites'>('all');
+  const [tab, setTab] = useState<'all' | 'favorites' | 'queue'>('all');
   const profile = auth.profile;
   const displayName = profile?.displayName || profile?.telegramName || profile?.username || '';
   const favoriteTab = tab === 'favorites';
+  const queueTab = tab === 'queue';
   const query = search.query.trim();
-  const rows = favoriteTab ? favorites.favorites : search.tracks;
-  const loading = favoriteTab ? favorites.favoritesLoading : query ? search.loading : library.loading;
-  const error = favoriteTab ? favorites.favoritesError : query ? search.error : library.error;
+  const rows = queueTab ? player.queue : favoriteTab ? favorites.favorites : search.tracks;
+  const loading = !queueTab && (favoriteTab ? favorites.favoritesLoading : query ? search.loading : library.loading);
+  const error = queueTab ? '' : favoriteTab ? favorites.favoritesError : query ? search.error : library.error;
   const retry = favoriteTab ? favorites.reloadFavorites : query ? search.retry : library.reload;
   const current = player.currentTrack;
+  const remoteAudio = player.mode === 'remote' && Boolean(player.activeDeviceId);
+  const outputName = remoteAudio
+    ? player.devices.find((device) => device.id === player.activeDeviceId)?.name
+    : undefined;
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-bg">
       <header className="flex-shrink-0 px-4 pb-0 pt-4">
         <div className="mb-3 flex items-center justify-between">
           <h1 className="text-[28px] font-semibold tracking-tight text-text">
-            {favoriteTab ? 'Favorites' : 'Music'}
+            {queueTab ? 'Queue' : favoriteTab ? 'Favorites' : 'Music'}
           </h1>
-          <button
-            type="button"
-            aria-label={profile ? 'Open profile' : 'Sign in'}
-            disabled={auth.status === 'checking'}
-            className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-accent text-accent-fg ring-2 ring-[var(--border)] active:opacity-70"
-            onClick={() => { hapticTap(); auth.openAuth(); }}
-          >
-            {profile?.profileImageUrl
-              ? <img src={profile.profileImageUrl} alt="" className="h-full w-full object-cover" />
-              : <span className="text-[11px] font-bold">{displayName.slice(0, 2).toUpperCase() || 'Me'}</span>}
-          </button>
+          <div className="flex items-center gap-2">
+            <PlaybackDevices language="en" />
+            <button
+              type="button"
+              aria-label={profile ? 'Open profile' : 'Sign in'}
+              disabled={auth.status === 'checking'}
+              className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-full bg-accent text-accent-fg ring-2 ring-[var(--border)] active:opacity-70"
+              onClick={() => { hapticTap(); auth.openAuth(); }}
+            >
+              {profile?.profileImageUrl
+                ? <img src={profile.profileImageUrl} alt="" className="h-full w-full object-cover" />
+                : <span className="text-[11px] font-bold">{displayName.slice(0, 2).toUpperCase() || 'Me'}</span>}
+            </button>
+          </div>
         </div>
-        {!favoriteTab && (
+        {tab === 'all' && (
           <SearchBar variant="mobile" value={search.query} onChange={search.setQuery} loading={search.loading} />
         )}
+        <PlaybackSessionNotice language="en" />
       </header>
 
       {(auth.notice || favorites.notice || auth.status === 'unavailable') && (
@@ -81,7 +92,7 @@ export default function MobileLayout({ auth, favorites, library, search, hapticT
         ) : rows.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-20 text-muted">
             <span className="text-[17px] font-semibold text-text">
-              {favoriteTab ? 'No favorites yet' : query ? 'No results' : 'No tracks'}
+              {queueTab ? 'Queue is empty' : favoriteTab ? 'No favorites yet' : query ? 'No results' : 'No tracks'}
             </span>
             {favoriteTab && <p className="px-8 text-center text-sm">Tap ♡ on any track to save it here</p>}
           </div>
@@ -113,6 +124,8 @@ export default function MobileLayout({ auth, favorites, library, search, hapticT
           volume={player.volume}
           shuffle={player.shuffle}
           repeat={player.repeat}
+          remoteAudio={remoteAudio}
+          outputName={outputName}
           onPlayPause={() => player.play(current)}
           onSeek={player.seek}
           onNext={player.playNext}
@@ -128,10 +141,12 @@ export default function MobileLayout({ auth, favorites, library, search, hapticT
         className="fixed bottom-0 left-0 right-0 z-[101] flex border-t border-[var(--border)] bg-surface/95 backdrop-blur-xl"
         style={{ paddingBottom: 'env(safe-area-inset-bottom)', height: 'calc(56px + env(safe-area-inset-bottom))' }}
       >
-        <TabBtn icon={<HomeIcon active={!favoriteTab} />} label="Music" active={!favoriteTab}
+        <TabBtn icon={<HomeIcon active={tab === 'all'} />} label="Music" active={tab === 'all'}
           onClick={() => { hapticTap(); setTab('all'); }} />
         <TabBtn icon={<HeartTabIcon active={favoriteTab} count={favorites.favoriteIds.size} />}
           label="Favorites" active={favoriteTab} onClick={() => { hapticTap(); setTab('favorites'); }} />
+        <TabBtn icon={<Icon name="queue" size={22} />} label="Queue" active={queueTab}
+          onClick={() => { hapticTap(); setTab('queue'); }} />
       </nav>
 
       {profile ? (
@@ -162,6 +177,8 @@ function TabBtn({ icon, label, active, onClick }: {
 }) {
   return (
     <button
+      type="button"
+      aria-current={active ? 'page' : undefined}
       className={`flex-1 flex flex-col items-center justify-center gap-[3px] transition-opacity active:opacity-50 ${active ? 'text-text' : 'text-muted'}`}
       onClick={onClick}
     >

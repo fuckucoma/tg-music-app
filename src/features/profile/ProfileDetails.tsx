@@ -1,6 +1,7 @@
 import { useRef, useState, type ChangeEvent } from 'react';
 import { Icon } from '../../components/Controls';
 import type { Profile } from '../../services/api';
+import { TelegramAccount } from './TelegramAccount';
 
 export interface ProfileActions {
   onLogout: () => void;
@@ -124,6 +125,8 @@ export function ProfileDetails({ profile, variant, onLogout, onUploadAvatar }: P
           </div>
         )}
       </dl>
+
+      <TelegramAccount key={profile.id} profile={profile} variant={variant} />
 
       <button
         type="button"

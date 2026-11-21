@@ -6,6 +6,8 @@ import type { RepeatMode } from '../features/player/PlayerStore';
 interface Props {
   track: Track; status: PlayerStatus; progress: number; duration: number; volume: number;
   shuffle: boolean; repeat: RepeatMode;
+  remoteAudio?: boolean;
+  outputName?: string;
   onPlayPause: () => void; onSeek: (r: number) => void;
   onNext: () => void; onPrev: () => void;
   onChangeVolume: (v: number) => void;
@@ -17,12 +19,13 @@ const fmt = (s: number) => {
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 };
 
-export function MiniPlayer({ track, status, progress, duration, volume, shuffle, repeat,
+export function MiniPlayer({ track, status, progress, duration, volume, shuffle, repeat, remoteAudio, outputName,
   onPlayPause, onSeek, onNext, onPrev, onChangeVolume, onToggleShuffle, onCycleRepeat }: Props) {
 
   const [expanded, setExpanded] = useState(false);
   const isPlaying = status === 'playing';
   const isLoading = status === 'loading';
+  const playLabel = isPlaying ? 'Pause' : 'Play';
   const isTouch   = typeof window !== 'undefined' && window.matchMedia('(hover:none) and (pointer:coarse)').matches;
 
   const seekFrom = (clientX: number, rect: DOMRect) =>
@@ -55,7 +58,7 @@ export function MiniPlayer({ track, status, progress, duration, volume, shuffle,
 
             {/* Header */}
             <div className="flex items-center justify-between px-5 pt-[calc(1rem+env(safe-area-inset-top))] pb-2 flex-shrink-0">
-              <button className="w-10 h-10 flex items-center justify-center rounded-xl text-text active:opacity-50" onClick={() => setExpanded(false)}>
+              <button type="button" aria-label="Close now playing" className="w-10 h-10 flex items-center justify-center rounded-xl text-text active:opacity-50" onClick={() => setExpanded(false)}>
                 <ChevronDown />
               </button>
               <span className="text-[11px] font-semibold tracking-widest uppercase text-muted">Now Playing</span>
@@ -76,6 +79,7 @@ export function MiniPlayer({ track, status, progress, duration, volume, shuffle,
             <div className="px-7 flex-shrink-0">
               <p className="text-[22px] font-semibold text-text tracking-tight truncate">{track.title}</p>
               <p className="text-[15px] text-muted font-mono truncate mt-0.5">{track.artist}</p>
+              {outputName && <p className="mt-1 truncate text-xs text-muted">Playing on {outputName}</p>}
             </div>
 
             {/* Seek */}
@@ -99,16 +103,16 @@ export function MiniPlayer({ track, status, progress, duration, volume, shuffle,
               <button className={`w-10 h-10 flex items-center justify-center rounded-xl transition-opacity ${shuffle ? 'text-accent' : 'text-muted'} active:opacity-50`} onClick={onToggleShuffle}>
                 <ShuffleIcon />
               </button>
-              <button className="w-10 h-10 flex items-center justify-center text-text rounded-xl active:opacity-50" onClick={onPrev}>
+              <button type="button" aria-label="Previous track" className="w-10 h-10 flex items-center justify-center text-text rounded-xl active:opacity-50" onClick={onPrev}>
                 <PrevIcon size={24} />
               </button>
-              <button className="w-16 h-16 rounded-full bg-accent text-accent-fg flex items-center justify-center shadow-lg active:scale-95 transition-transform" onClick={onPlayPause}>
+              <button type="button" aria-label={playLabel} className="w-16 h-16 rounded-full bg-accent text-accent-fg flex items-center justify-center shadow-lg active:scale-95 transition-transform" onClick={onPlayPause}>
                 {isLoading
                   ? <span className="w-6 h-6 border-2 border-accent-fg/30 border-t-accent-fg rounded-full animate-spin-slow" />
                   : isPlaying ? <PauseIcon size={26} /> : <PlayIcon size={26} />
                 }
               </button>
-              <button className="w-10 h-10 flex items-center justify-center text-text rounded-xl active:opacity-50" onClick={onNext}>
+              <button type="button" aria-label="Next track" className="w-10 h-10 flex items-center justify-center text-text rounded-xl active:opacity-50" onClick={onNext}>
                 <NextIcon size={24} />
               </button>
               <button className={`w-10 h-10 flex items-center justify-center rounded-xl transition-opacity ${repeat !== 'none' ? 'text-accent' : 'text-muted'} active:opacity-50`} onClick={onCycleRepeat}>
@@ -117,7 +121,7 @@ export function MiniPlayer({ track, status, progress, duration, volume, shuffle,
             </div>
 
             {/* Volume — desktop only */}
-            {!isTouch && (
+            {!isTouch && !remoteAudio && (
               <div className="flex items-center gap-3 px-7 mt-5 flex-shrink-0 text-muted">
                 <VolumeIcon muted={volume === 0} />
                 <input type="range" className="flex-1" min={0} max={1} step={0.01} value={volume} onChange={e => onChangeVolume(parseFloat(e.target.value))} />
@@ -148,21 +152,23 @@ export function MiniPlayer({ track, status, progress, duration, volume, shuffle,
           {/* Info */}
           <div className="flex-1 min-w-0">
             <p className="text-[14px] font-semibold text-text truncate">{track.title}</p>
-            <p className="text-[12px] text-muted font-mono truncate">{track.artist}</p>
+            <p className="text-[12px] text-muted font-mono truncate">
+              {outputName ? `Playing on ${outputName}` : track.artist}
+            </p>
           </div>
 
           {/* Controls */}
           <div className="flex items-center gap-0.5 flex-shrink-0" onClick={e => e.stopPropagation()}>
-            <button className="w-9 h-9 flex items-center justify-center text-muted rounded-xl active:opacity-50" onClick={onPrev}>
+            <button type="button" aria-label="Previous track" className="w-9 h-9 flex items-center justify-center text-muted rounded-xl active:opacity-50" onClick={onPrev}>
               <PrevIcon size={17} />
             </button>
-            <button className="w-10 h-10 flex items-center justify-center rounded-full bg-accent text-accent-fg active:scale-95 transition-transform" onClick={onPlayPause}>
+            <button type="button" aria-label={playLabel} className="w-10 h-10 flex items-center justify-center rounded-full bg-accent text-accent-fg active:scale-95 transition-transform" onClick={onPlayPause}>
               {isLoading
                 ? <span className="w-4 h-4 border-2 border-accent-fg/30 border-t-accent-fg rounded-full animate-spin-slow" />
                 : isPlaying ? <PauseIcon size={17} /> : <PlayIcon size={17} />
               }
             </button>
-            <button className="w-9 h-9 flex items-center justify-center text-muted rounded-xl active:opacity-50" onClick={onNext}>
+            <button type="button" aria-label="Next track" className="w-9 h-9 flex items-center justify-center text-muted rounded-xl active:opacity-50" onClick={onNext}>
               <NextIcon size={17} />
             </button>
           </div>

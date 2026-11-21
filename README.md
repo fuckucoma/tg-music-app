@@ -20,6 +20,12 @@ Deploy `dist/` to your static host. Set `VITE_API_BASE_URL` to the API's HTTPS U
 
 Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to enable Realtime updates of the public catalog. The browser uses a public key for this subscription. The backend uses a separate service key for Storage.
 
+## Listen on multiple devices
+
+In the website profile, generate a Telegram link code, then enter and confirm it in the Mini App profile. Both sign-ins then use the same account and queue.
+
+Start a track on the website, then open the Mini App on the linked account to control it. Open the device picker from the desktop player or the mobile header to move audio to another connected device. Tap **Continue playback here** if the receiving browser or Telegram requires interaction to start audio. Guests can play music locally.
+
 ## Project structure
 
 - `src/app` starts the app and owns the shared player provider.

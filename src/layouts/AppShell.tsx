@@ -1,15 +1,14 @@
 import { useEffect, useState } from 'react';
 import { LoginScreen } from '../components/LoginScreen';
-import { useAuth } from '../features/auth/useAuth';
+import { useAccount } from '../features/auth/AuthProvider';
 import { useFavorites } from '../features/favorites/useFavorites';
-import { useLibrary } from '../features/library/useLibrary';
+import type { useLibrary } from '../features/library/useLibrary';
 import { useCatalogSearch } from '../features/search/useCatalogSearch';
-import { useTelegram } from '../platform/telegram/useTelegram';
 import DesktopLayout from './DesktopLayout';
 import MobileLayout from './MobileLayout';
 
 export interface LayoutProps {
-  auth: ReturnType<typeof useAuth>;
+  auth: ReturnType<typeof useAccount>;
   favorites: ReturnType<typeof useFavorites>;
   library: ReturnType<typeof useLibrary>;
   search: ReturnType<typeof useCatalogSearch>;
@@ -18,11 +17,10 @@ export interface LayoutProps {
 
 const desktop = window.matchMedia('(min-width: 651px)');
 
-export function AppShell() {
+export function AppShell({ library }: { library: LayoutProps['library'] }) {
   const [wide, setWide] = useState(desktop.matches);
-  const { initData, hapticTap } = useTelegram();
-  const auth = useAuth(initData);
-  const library = useLibrary();
+  const auth = useAccount();
+  const { initData, hapticTap } = auth;
   const favorites = useFavorites(auth.token, auth.openAuth, auth.checkError);
   const search = useCatalogSearch(library.tracks, library.revision);
 

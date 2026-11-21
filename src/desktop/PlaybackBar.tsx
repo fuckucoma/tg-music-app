@@ -1,10 +1,11 @@
 import { useRef, type CSSProperties } from 'react';
-import type { Player } from '../features/player/usePlayer';
+import type { usePlayer } from '../features/player/PlayerProvider';
+import { PlaybackDevices, PlaybackSessionNotice } from '../components/PlaybackDevices';
 import { Cover, Icon, IconButton, time } from './Controls';
 import './playback.css';
 
 type Props = {
-  player: Player;
+  player: ReturnType<typeof usePlayer>;
   onQueue: () => void;
   queueOpen: boolean;
   onStart: () => void;
@@ -14,6 +15,10 @@ type Props = {
 export function PlaybackBar({ player, onQueue, queueOpen, onStart, canStart }: Props) {
   const previousVolume = useRef(player.volume > 0 ? player.volume : 1);
   const hasTrack = !!player.currentTrack;
+  const remoteAudio = player.mode === 'remote' && Boolean(player.activeDeviceId);
+  const outputName = remoteAudio
+    ? player.devices.find((device) => device.id === player.activeDeviceId)?.name
+    : undefined;
   const progress = Number.isFinite(player.progress) ? Math.min(1, Math.max(0, player.progress)) : 0;
   const duration = Number.isFinite(player.duration) ? player.duration : 0;
   const toggleMute = () => {
@@ -32,6 +37,7 @@ export function PlaybackBar({ player, onQueue, queueOpen, onStart, canStart }: P
   return (
     <section className="du-player" aria-label="Плеер">
       <div className="du-now">
+        <PlaybackDevices language="ru" />
         <Cover track={player.currentTrack} className="du-now-cover" />
         <div className="du-now-text">
           <strong title={player.currentTrack?.title}>
@@ -40,9 +46,11 @@ export function PlaybackBar({ player, onQueue, queueOpen, onStart, canStart }: P
           <span title={player.currentTrack?.artist}>
             {player.currentTrack?.artist || 'Выберите трек'}
           </span>
+          {outputName && <span title={outputName}>Звук на {outputName}</span>}
         </div>
       </div>
       <div className="du-transport">
+        <PlaybackSessionNotice language="ru" />
         <div className="du-transport-buttons">
           <IconButton
             icon="shuffle"
@@ -106,7 +114,7 @@ export function PlaybackBar({ player, onQueue, queueOpen, onStart, canStart }: P
           />
           <span>{time(duration)}</span>
         </div>
-        {player.status === 'error' && (
+        {player.status === 'error' && !player.needsGesture && (
           <span className="du-playback-error" role="alert">
             Не удалось воспроизвести трек
           </span>
@@ -123,6 +131,7 @@ export function PlaybackBar({ player, onQueue, queueOpen, onStart, canStart }: P
         <IconButton
           icon={player.volume === 0 ? 'mute' : 'volume'}
           label={player.volume === 0 ? 'Включить звук' : 'Выключить звук'}
+          disabled={remoteAudio}
           onClick={toggleMute}
         />
         <input
@@ -131,6 +140,7 @@ export function PlaybackBar({ player, onQueue, queueOpen, onStart, canStart }: P
           max="1"
           step="0.01"
           value={player.volume}
+          disabled={remoteAudio}
           onChange={(e) => {
             const value = Number(e.target.value);
             if (value > 0) previousVolume.current = value;

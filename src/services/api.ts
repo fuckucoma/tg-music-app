@@ -1,6 +1,6 @@
 import type { Track } from '../types/track';
 
-const BASE_URL = (
+export const BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || 'https://music-streaming-server-lfon.onrender.com'
 ).replace(/\/$/, '');
 const TOKEN_KEY = 'tg_music_token';
@@ -26,6 +26,7 @@ export interface Profile {
   email?: string | null;
   createdAt?: string;
   isAdmin?: boolean;
+  hasPassword?: boolean;
 }
 
 function mediaUrl(value?: string | null) {
@@ -74,6 +75,34 @@ export const register = (username: string, password: string, signal?: AbortSigna
   requestToken('/users/register', { username, password }, signal);
 export const authWithTelegram = (initData: string, signal?: AbortSignal) =>
   requestToken('/auth/telegram', { initData }, signal);
+
+interface TelegramLinkCode {
+  code: string;
+  expiresAt: string;
+}
+
+export interface TelegramLinkPreview {
+  username: string;
+  mergeRequired: boolean;
+}
+
+export function createTelegramLinkCode(token: string, password: string) {
+  return request<TelegramLinkCode>('/auth/telegram/link-code', json('POST', { password }), token);
+}
+
+export function previewTelegramLink(code: string, initData: string) {
+  return request<TelegramLinkPreview>('/auth/telegram/link/preview', json('POST', { code, initData }));
+}
+
+export function confirmTelegramLink(code: string, initData: string, confirmMerge: boolean) {
+  return requestToken('/auth/telegram/link', { code, initData, confirmMerge });
+}
+
+export async function unlinkTelegram(token: string, password: string) {
+  const result = await request<{ token: string }>('/auth/telegram/link', json('DELETE', { password }), token);
+  if (!result.token) throw new Error('Сервер не вернул данные для входа.');
+  return result.token;
+}
 
 export async function getProfile(token: string, signal?: AbortSignal): Promise<Profile> {
   const profile = await request<Profile>('/users/profile', { signal }, token);

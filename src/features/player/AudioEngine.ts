@@ -7,6 +7,10 @@ interface AudioCallbacks {
   onEnded: () => void;
   onNext: () => void;
   onPrevious: () => void;
+  onPlaybackBlocked?: () => void;
+  onMediaPlay?: () => void;
+  onMediaPause?: () => void;
+  onMediaSeek?: (position: number) => void;
 }
 
 const mediaActions: MediaSessionAction[] = [
@@ -20,6 +24,7 @@ export class AudioEngine {
   private hasTrack = false;
   private wantsPlayback = false;
   private requestId = 0;
+  private pendingPosition: number | null = null;
 
   constructor(private readonly callbacks: AudioCallbacks, volume: number) {
     this.audio.preload = 'metadata';
@@ -43,6 +48,7 @@ export class AudioEngine {
       timeupdate: () => this.updateProgress(),
       durationchange: () => {
         this.callbacks.onDuration(this.duration);
+        if (this.pendingPosition !== null && this.duration) this.seekTo(this.pendingPosition);
         this.updateProgress();
       },
       ended: () => {
@@ -73,16 +79,18 @@ export class AudioEngine {
     return this.audio.currentTime;
   }
 
-  load(track: Track) {
+  load(track: Track, { position = 0, playing = true } = {}) {
     this.requestId++;
     this.wantsPlayback = false;
     this.hasTrack = true;
+    this.pendingPosition = position > 0 ? position : null;
     this.audio.src = track.streamUrl;
     this.audio.load();
     this.callbacks.onProgress(0);
     this.callbacks.onDuration(0);
     this.setMediaTrack(track);
-    this.resume();
+    if (playing) this.resume();
+    else this.setStatus('paused');
   }
 
   togglePlayback() {
@@ -121,20 +129,21 @@ export class AudioEngine {
     }
   }
 
-  private resume() {
+  resume() {
     if (!this.hasTrack || this.wantsPlayback) return;
     if (this.audio.error) this.audio.load();
     this.wantsPlayback = true;
     const requestId = ++this.requestId;
     this.setStatus('loading');
-    void this.audio.play().catch(() => {
+    void this.audio.play().catch((error: unknown) => {
       if (requestId !== this.requestId) return;
       this.wantsPlayback = false;
       this.setStatus('error');
+      if (error instanceof DOMException && error.name === 'NotAllowedError') this.callbacks.onPlaybackBlocked?.();
     });
   }
 
-  private pause() {
+  pause() {
     if (!this.hasTrack) return;
     this.requestId++;
     this.wantsPlayback = false;
@@ -149,8 +158,13 @@ export class AudioEngine {
     }
   }
 
-  private seekTo(seconds: number) {
-    if (!this.duration) return;
+  seekTo(seconds: number) {
+    if (!this.hasTrack || !Number.isFinite(seconds)) return;
+    if (!this.duration) {
+      this.pendingPosition = Math.max(0, seconds);
+      return;
+    }
+    this.pendingPosition = null;
     this.audio.currentTime = Math.min(this.duration, Math.max(0, seconds));
     this.updateProgress();
   }
@@ -179,19 +193,22 @@ export class AudioEngine {
         session.metadata = null;
       }
     }
-    this.setMediaAction('play', () => this.resume());
-    this.setMediaAction('pause', () => this.pause());
+    const play = this.callbacks.onMediaPlay ?? (() => this.resume());
+    const pause = this.callbacks.onMediaPause ?? (() => this.pause());
+    const seek = this.callbacks.onMediaSeek ?? ((position: number) => this.seekTo(position));
+    this.setMediaAction('play', play);
+    this.setMediaAction('pause', pause);
     this.setMediaAction('stop', () => {
-      this.pause();
-      this.seekTo(0);
+      pause();
+      seek(0);
     });
     this.setMediaAction('previoustrack', () => this.callbacks.onPrevious());
     this.setMediaAction('nexttrack', () => this.callbacks.onNext());
     this.setMediaAction('seekto', ({ seekTime }) => {
-      if (seekTime !== undefined) this.seekTo(seekTime);
+      if (seekTime !== undefined) seek(seekTime);
     });
-    this.setMediaAction('seekforward', ({ seekOffset }) => this.seekTo(this.currentTime + (seekOffset ?? 10)));
-    this.setMediaAction('seekbackward', ({ seekOffset }) => this.seekTo(this.currentTime - (seekOffset ?? 10)));
+    this.setMediaAction('seekforward', ({ seekOffset }) => seek(this.currentTime + (seekOffset ?? 10)));
+    this.setMediaAction('seekbackward', ({ seekOffset }) => seek(this.currentTime - (seekOffset ?? 10)));
   }
 
   private setMediaAction(action: MediaSessionAction, handler: MediaSessionActionHandler | null) {

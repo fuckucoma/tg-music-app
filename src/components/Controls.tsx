@@ -105,6 +105,12 @@ const shapes = {
       <rect x="17" y="12" width="4" height="8" rx="2" />
     </>
   ),
+  devices: (
+    <>
+      <path d="M13 16H3V4h16v5M7 20h5M9 16v4" />
+      <rect x="15" y="11" width="6" height="9" rx="1.5" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof shapes;

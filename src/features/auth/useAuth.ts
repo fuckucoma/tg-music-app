@@ -22,21 +22,26 @@ export function useAuth(initData?: string) {
   const [notice, setNotice] = useState('');
   const [attempt, setAttempt] = useState(0);
   const current = useRef<AbortController>();
+  const activeToken = useRef<string | null>(null);
+  const accountChange = useRef<{ token: string | null } | null>(null);
   const openAuth = useCallback(() => setAuthOpen(true), []);
   const closeAuth = useCallback(() => setAuthOpen(false), []);
   const clearNotice = useCallback(() => setNotice(''), []);
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
 
-  const verify = useCallback(async (token: string, signal: AbortSignal) => {
+  const verify = useCallback(async (token: string, signal: AbortSignal, storedAtStart?: string | null) => {
     const profile = await getProfile(token, signal);
     if (signal.aborted) return;
-    setToken(token);
+    activeToken.current = token;
+    if (storedAtStart === undefined || getToken() === storedAtStart) setToken(token);
     setSession({ status: 'authenticated', token, profile });
     setNotice('');
     setAuthOpen(false);
   }, []);
 
   useEffect(() => {
+    accountChange.current = null;
+    activeToken.current = null;
     const controller = new AbortController();
     current.current = controller;
     const { signal } = controller;
@@ -47,7 +52,7 @@ export function useAuth(initData?: string) {
       if (initData) {
         try {
           const token = await authWithTelegram(initData, signal);
-          await verify(token, signal);
+          await verify(token, signal, previous);
           return;
         } catch (error) {
           if (signal.aborted) return;
@@ -59,7 +64,7 @@ export function useAuth(initData?: string) {
       }
       if (previous) {
         try {
-          await verify(previous, signal);
+          await verify(previous, signal, previous);
           return;
         } catch (error) {
           if (signal.aborted) return;
@@ -75,10 +80,13 @@ export function useAuth(initData?: string) {
     }
 
     void restore();
-    return () => current.current?.abort();
+    return () => {
+      accountChange.current = null;
+      current.current?.abort();
+    };
   }, [initData, attempt, verify]);
 
-  const acceptCredentials = useCallback(async (token: string, formSignal?: AbortSignal) => {
+  const verifyCredentials = useCallback(async (token: string, formSignal?: AbortSignal) => {
     current.current?.abort();
     const controller = new AbortController();
     current.current = controller;
@@ -92,10 +100,31 @@ export function useAuth(initData?: string) {
     }
   }, [verify]);
 
+  const acceptCredentials = useCallback((token: string, formSignal?: AbortSignal) => {
+    accountChange.current = null;
+    return verifyCredentials(token, formSignal);
+  }, [verifyCredentials]);
+
+  const changeAccount = useCallback(async (requestToken: () => Promise<string>) => {
+    if (accountChange.current) throw new Error('Another account change is in progress');
+    const change = { token: activeToken.current };
+    accountChange.current = change;
+    try {
+      const token = await requestToken();
+      if (accountChange.current === change && activeToken.current === change.token) {
+        await verifyCredentials(token);
+      }
+    } finally {
+      if (accountChange.current === change) accountChange.current = null;
+    }
+  }, [verifyCredentials]);
+
   const logout = useCallback(() => {
+    accountChange.current = null;
     current.current?.abort();
-    const token = getToken();
-    clearToken();
+    const token = activeToken.current;
+    activeToken.current = null;
+    if (token && getToken() === token) clearToken();
     setSession(guest);
     closeAuth();
     clearNotice();
@@ -103,8 +132,10 @@ export function useAuth(initData?: string) {
   }, [closeAuth, clearNotice]);
 
   const checkError = useCallback((error: unknown, token: string) => {
-    if (!invalidSession(error) || getToken() !== token) return;
-    clearToken();
+    // The confirmed merge may revoke the old Telegram login before its replacement arrives.
+    if (!invalidSession(error) || activeToken.current !== token || accountChange.current?.token === token) return;
+    activeToken.current = null;
+    if (getToken() === token) clearToken();
     setSession(guest);
     setNotice('Сессия истекла. Войдите снова.');
     openAuth();
@@ -124,8 +155,22 @@ export function useAuth(initData?: string) {
     }
   }, [session.token, checkError]);
 
+  const refreshProfile = useCallback(async (signal?: AbortSignal) => {
+    const token = session.token;
+    if (!token) return null;
+    try {
+      const profile = await getProfile(token, signal);
+      if (signal?.aborted || activeToken.current !== token) return null;
+      setSession((old) => old.status === 'authenticated' && old.token === token ? { ...old, profile } : old);
+      return profile;
+    } catch (error) {
+      if (!signal?.aborted) checkError(error, token);
+      throw error;
+    }
+  }, [session.token, checkError]);
+
   return {
     ...session, authOpen, notice, openAuth, closeAuth, clearNotice, retry, acceptCredentials,
-    logout, checkError, uploadAvatar,
+    logout, checkError, uploadAvatar, refreshProfile, changeAccount,
   };
 }
