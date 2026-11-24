@@ -114,6 +114,10 @@ function browser(t) {
     set currentTime(value) { this.time = value; seekCalls.push(value); }
     duration = 120;
     readyState = 4;
+    bufferedUntil = 0;
+    get buffered() {
+      return { length: this.bufferedUntil > 0 ? 1 : 0, start: () => 0, end: () => this.bufferedUntil };
+    }
     playbackRate = 1;
     paused = true;
     ended = false;
@@ -121,10 +125,14 @@ function browser(t) {
 
     load() {
       loadCalls.push(this.src);
+      audible.delete(this);
+      this.paused = true;
       this.time = 0;
+      this.bufferedUntil = 0;
       this.error = null;
       this.ended = false;
       this.dispatchEvent(new Event('durationchange'));
+      if (this.src) this.dispatchEvent(new Event('canplay'));
     }
     play() {
       assert.ok(this.src, 'audio requires a real source');
@@ -217,6 +225,7 @@ function server(t, audible, delayRequest, delayResponse, legacy = false) {
   const devices = new Map();
   const streams = new Set();
   const commands = [];
+  const handoffWaiters = new Set();
   const text = new TextEncoder();
   const session = {
     version: 0, activeDeviceId: null, pendingDeviceId: null, trackId: null, duration: 120,
@@ -224,11 +233,20 @@ function server(t, audible, delayRequest, delayResponse, legacy = false) {
     queue: [], queueIndex: -1, playing: false, shuffle: false, repeat: 'none',
   };
   let reachable = true;
+  let projectedExtra = 0;
   let lastServerTime = 0;
   const status = () => {
     const serverTime = lastServerTime = Math.max(Date.now(), lastServerTime + 1);
     const snapshot = { ...session, leaseUntil: session.activeDeviceId && serverTime + 30_000 };
     if (legacy) delete snapshot.timelineRevision;
+    else {
+      snapshot.anchorPosition = snapshot.position;
+      snapshot.nextTrackId = snapshot.queue[(snapshot.queueIndex + 1) % snapshot.queue.length] ?? null;
+      snapshot.endedTrackId = snapshot.repeat === 'one' ? snapshot.trackId
+        : snapshot.repeat === 'all' ? snapshot.nextTrackId
+        : snapshot.queue[snapshot.queueIndex + 1] ?? null;
+    }
+    if (snapshot.playing && !snapshot.pendingDeviceId) snapshot.position += projectedExtra;
     return { serverTime, session: snapshot, devices: [...devices.values()] };
   };
   const emit = (snapshot = status()) => {
@@ -302,8 +320,17 @@ function server(t, audible, delayRequest, delayResponse, legacy = false) {
       assert.equal(audible.size, 0, 'old output paused before acknowledgement');
       session.activeDeviceId = session.pendingDeviceId;
       session.pendingDeviceId = null;
+      session.position = body.position ?? session.position;
+      session.timelineRevision = crypto.randomUUID();
       session.version++;
       emit();
+      for (const complete of handoffWaiters) complete();
+    } else if (url.pathname === '/playback/heartbeat' && body.waitForHandoff && session.pendingDeviceId === body.deviceId) {
+      await new Promise((resolve) => {
+        const complete = () => { handoffWaiters.delete(complete); resolve(); };
+        handoffWaiters.add(complete);
+        parameters.signal.addEventListener('abort', complete, { once: true });
+      });
     }
     const snapshot = status();
     if (delayResponse) {
@@ -315,6 +342,8 @@ function server(t, audible, delayRequest, delayResponse, legacy = false) {
   return {
     session, status, emit, commands,
     get activeStreams() { return streams.size; },
+    get waitingHandoffs() { return handoffWaiters.size; },
+    setProjectedExtra: (value) => { projectedExtra = value; },
     setReachable: (value) => { reachable = value; },
   };
 }
@@ -558,14 +587,84 @@ test('a phone changes the track on the leased desktop without opening another au
   desktop.play(track, [track, second]);
   await eventually(() => phone.getView().status === 'playing' && audible.size === 1, 'playing on desktop');
   const [engine] = audible;
+  api.setProjectedExtra(1.2);
   phone.playNext();
   await eventually(() => desktop.getView().currentTrack?.id === second.id && engine.src === second.streamUrl, 'desktop advanced');
   assert.equal(api.session.activeDeviceId, 'desktop');
   assert.equal(phone.getView().mode, 'remote');
   assert.equal(audible.size, 1);
   assert.equal(audible.has(engine), true);
+  assert.equal(engine.currentTime, 0, 'the new track starts at its anchor, before any projected time');
   assert.deepEqual(playCalls, [track.streamUrl, second.streamUrl]);
   assert.deepEqual(loadCalls, [track.streamUrl, second.streamUrl]);
+});
+
+test('local Next starts at zero before a slow command and restores the previous track if rejected', async (t) => {
+  const { audible, loadCalls, seekCalls, makePlayer } = browser(t);
+  let release;
+  const api = server(t, audible, (_path, _signal, body) => {
+    if (body.command?.type === 'next') return new Promise(resolve => { release = resolve; });
+  });
+  const second = { ...track, id: 9, streamUrl: `${fixtureUrl}/audio/9` };
+  const player = makePlayer('desktop', [track, second]);
+  await eventually(() => player.getView().devices.length, 'device registered');
+  player.play(track, [track, second]);
+  await eventually(() => player.getView().status === 'playing', 'playing');
+  await setImmediate();
+  const [audio] = audible;
+  audio.time = 18;
+  api.setProjectedExtra(1.2);
+  player.playNext();
+  assert.equal(audio.src, second.streamUrl, 'the current output reacts before the network');
+  assert.equal(audio.currentTime, 0);
+  assert.equal(api.session.trackId, track.id);
+  await eventually(() => release, 'Next in flight');
+  api.emit();
+  await setImmediate();
+  assert.equal(audio.src, second.streamUrl, 'heartbeat or SSE for the old version does not interrupt the preview');
+  release(Response.json({}, { status: 503 }));
+  await eventually(() => player.getView().notice && audio.src === track.streamUrl, 'rejected Next restores the old track');
+  assert.equal(audio.currentTime, 18);
+  await setImmediate();
+
+  release = undefined;
+  seekCalls.length = 0;
+  player.playNext();
+  await eventually(() => release && audio.src === second.streamUrl, 'another Next is in flight');
+  audio.time = 4;
+  player.play(second);
+  assert.equal(audible.size, 0, 'Pause also acts immediately while Next is pending');
+  release();
+  await eventually(() => api.session.trackId === second.id && !api.session.playing, 'Next and Pause were confirmed in order');
+  await setImmediate();
+  assert.equal(audio.currentTime, 4);
+  assert.deepEqual(seekCalls, []);
+  assert.deepEqual(loadCalls, [track.streamUrl, second.streamUrl, track.streamUrl, second.streamUrl]);
+});
+
+test('the receiving output opens its confirmation while the outgoing acknowledgement is in flight', async (t) => {
+  const { audible, makePlayer } = browser(t);
+  let acknowledge;
+  const api = server(t, audible, (path) => {
+    if (path === '/playback/ack') return new Promise(resolve => { acknowledge = resolve; });
+  });
+  const desktop = makePlayer('desktop');
+  const phone = makePlayer('phone');
+  await eventually(() => desktop.getView().devices.length === 2, 'two devices registered');
+  desktop.play(track);
+  await eventually(() => desktop.getView().status === 'playing', 'desktop playing');
+  const [audio] = audible;
+  audio.time = 23;
+  api.setProjectedExtra(1.2);
+  phone.takeOver();
+  await eventually(() => acknowledge && api.waitingHandoffs === 1, 'receiver heartbeat is waiting before acknowledgement');
+  assert.equal(audible.size, 0);
+  assert.equal(api.session.activeDeviceId, 'desktop');
+  acknowledge();
+  await eventually(() => phone.getView().mode === 'active' && audible.size === 1, 'receiver gets the lease');
+  const [receivingAudio] = audible;
+  assert.equal(receivingAudio.currentTime, 23);
+  assert.equal(audible.has(audio), false);
 });
 
 test('a local seek after a natural track transition does not inherit the old ended state', async (t) => {
@@ -591,6 +690,93 @@ test('a local seek after a natural track transition does not inherit the old end
   assert.equal(audible.has(audio), true);
 });
 
+test('natural transition reuses the buffered track while the server confirms it', async (t) => {
+  const { audible, loadCalls, makePlayer } = browser(t);
+  let releaseEnd;
+  const api = server(t, audible, async (path, signal, body) => {
+    if (body.command?.type === 'ended') await new Promise(resolve => {
+      releaseEnd = resolve;
+      signal.addEventListener('abort', resolve, { once: true });
+    });
+  });
+  const second = { ...track, id: 9, streamUrl: `${fixtureUrl}/audio/9` };
+  const player = makePlayer('desktop', [track, second]);
+  await eventually(() => player.getView().devices.length, 'device registered');
+  player.play(track, [track, second]);
+  await eventually(() => player.getView().status === 'playing', 'first track playing');
+  const [audio] = audible;
+  audio.time = 108;
+  audio.bufferedUntil = 110;
+  await setTimeout(300);
+  assert.equal(loadCalls.includes(second.streamUrl), false, 'the current buffer has priority');
+  audio.bufferedUntil = 120;
+  await eventually(() => loadCalls.includes(second.streamUrl), 'next track preloaded');
+
+  audio.paused = audio.ended = true;
+  audible.delete(audio);
+  audio.dispatchEvent(new Event('ended'));
+  await eventually(() => releaseEnd && player.getView().status === 'playing', 'next track plays before the server responds');
+  assert.equal(api.session.trackId, track.id);
+  assert.equal([...audible][0].src, second.streamUrl);
+  assert.equal(loadCalls.filter(url => url === second.streamUrl).length, 1, 'the prepared source is not loaded again');
+  assert.equal(performance.getEntriesByName('playback:ended-to-playing').length, 1);
+  releaseEnd();
+  await eventually(() => api.session.trackId === second.id, 'server confirmed the transition');
+  assert.equal(player.getView().currentTrack.id, second.id);
+});
+
+test('a blocked preloaded element falls back to the current audio element', async (t) => {
+  const { audible, loadCalls, makePlayer, blockNextPlay } = browser(t);
+  server(t, audible);
+  const second = { ...track, id: 9, streamUrl: `${fixtureUrl}/audio/9` };
+  const player = makePlayer('desktop', [track, second]);
+  await eventually(() => player.getView().devices.length, 'device registered');
+  player.play(track, [track, second]);
+  await eventually(() => player.getView().status === 'playing', 'first track playing');
+  const [audio] = audible;
+  audio.time = 110;
+  audio.bufferedUntil = 120;
+  await eventually(() => loadCalls.includes(second.streamUrl), 'next track preloaded');
+  blockNextPlay();
+  audio.paused = audio.ended = true;
+  audible.delete(audio);
+  audio.dispatchEvent(new Event('ended'));
+  await eventually(() => audible.has(audio) && player.getView().status === 'playing', 'previous element can play again');
+  assert.equal(audio.src, second.streamUrl);
+  assert.equal(player.getView().needsGesture, false);
+});
+
+test('a rejected natural transition returns to the ended track without restarting it', async (t) => {
+  const { audible, loadCalls, makePlayer } = browser(t);
+  let rejectEnd;
+  const api = server(t, audible, async (path, signal, body) => {
+    if (body.command?.type === 'ended') return new Promise(resolve => {
+      rejectEnd = () => resolve(Response.json({ error: 'Rejected' }, { status: 400 }));
+      signal.addEventListener('abort', rejectEnd, { once: true });
+    });
+  });
+  const second = { ...track, id: 9, streamUrl: `${fixtureUrl}/audio/9` };
+  const player = makePlayer('desktop', [track, second]);
+  await eventually(() => player.getView().devices.length, 'device registered');
+  player.play(track, [track, second]);
+  await eventually(() => player.getView().status === 'playing', 'first track playing');
+  const [audio] = audible;
+  audio.time = 110;
+  audio.bufferedUntil = 120;
+  await eventually(() => loadCalls.includes(second.streamUrl), 'next track preloaded');
+
+  audio.time = 120;
+  audio.paused = audio.ended = true;
+  audible.delete(audio);
+  audio.dispatchEvent(new Event('ended'));
+  await eventually(() => rejectEnd && [...audible][0]?.src === second.streamUrl, 'next track playing locally');
+  rejectEnd();
+  await eventually(() => player.getView().notice && player.getView().currentTrack?.id === track.id, 'old track restored');
+  assert.equal(audible.size, 0);
+  assert.equal(player.getView().status, 'paused');
+  assert.equal(api.session.trackId, track.id);
+});
+
 async function eventually(condition, label, timeout = 1_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -601,7 +787,7 @@ async function eventually(condition, label, timeout = 1_000) {
 }
 
 test('Play can wait for a Render response that takes more than six seconds', async (t) => {
-  const { audible } = browser(t);
+  const { audible, loadCalls } = browser(t);
   const api = server(t, audible, async (path, signal) => {
     if (path === '/playback/command') await setTimeout(6_500, undefined, { signal });
   });
@@ -611,11 +797,15 @@ test('Play can wait for a Render response that takes more than six seconds', asy
   player.start();
   try {
     await eventually(() => player.getView().devices.length === 1, 'device registered');
+    api.setProjectedExtra(1);
     player.play(track, [track]);
     assert.equal(player.getView().pendingPlayTrackId, track.id);
     await eventually(() => api.commands.length === 1, 'play request in flight');
+    assert.deepEqual(loadCalls, [track.streamUrl], 'buffering starts while the request is in flight');
     assert.equal(audible.size, 0);
     await eventually(() => audible.size === 1, 'the delayed command granted playback', 9_000);
+    assert.deepEqual(loadCalls, [track.streamUrl], 'Play reuses the same buffered source');
+    assert.equal([...audible][0].currentTime, 0);
     await eventually(() => player.getView().pendingPlayTrackId === null, 'loading state cleared');
     assert.equal(api.session.activeDeviceId, device.deviceId);
     assert.equal(player.getView().notice, null);

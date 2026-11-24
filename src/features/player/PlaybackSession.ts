@@ -4,7 +4,7 @@ import {
   type DeviceCredentials, type DevicePlatform, type PlaybackCommand, type PlaybackDevice, type PlaybackSnapshot,
 } from '../../services/playback';
 import type { PlayerStatus, Track } from '../../types/track';
-import { AudioEngine } from './AudioEngine';
+import { AudioEngine, preloadAudio, recordPlaybackTiming, unloadAudio } from './AudioEngine';
 import { newPlaybackId } from './deviceIdentity';
 import { createPlaybackProgress } from './PlaybackProgress';
 import type { RepeatMode } from './PlayerStore';
@@ -83,6 +83,14 @@ function leaseRemaining(snapshot: PlaybackSnapshot) {
 type Operation = (signal: AbortSignal) => Promise<PlaybackSnapshot>;
 type CreateCommand = (snapshot: PlaybackSnapshot) => PlaybackCommand | null;
 type SeekIntent = { id: string; trackId: number; position: number; local: boolean; epoch: number };
+type TransportIntent = { version: number; playing: boolean };
+type TrackPreview = {
+  track: Track;
+  version: number;
+  previousPosition: number;
+  ended?: boolean;
+  transport?: TransportIntent;
+};
 
 export class PlaybackSession {
   private readonly api;
@@ -110,8 +118,12 @@ export class PlaybackSession {
   private refreshInFlight: Promise<void> | null = null;
   private refreshRequested = false;
   private ackInFlight = false;
+  private handoffConfirmationInFlight = false;
   private ackPosition: number | undefined;
   private commands = Promise.resolve();
+  private queuedCommands = 0;
+  private trackPreview: TrackPreview | null = null;
+  private startPosition: number | undefined;
   private eventsAbort: AbortController | null = null;
   private eventsHealthy = false;
   private reconnectDelay = 1_000;
@@ -124,8 +136,10 @@ export class PlaybackSession {
   private pendingSeek: SeekIntent | null = null;
   private seekInFlight: string | null = null;
   private seekEpoch = 0;
-  private transport: { version: number; playing: boolean } | null = null;
+  private transport: TransportIntent | null = null;
   private pendingPlay: { trackId: number } | null = null;
+  private prepared: { track: Track; audio: HTMLAudioElement } | null = null;
+  private playbackTiming: { trackId: number; name: string; startedAt: number } | null = null;
   private suspended = false;
   private generation = 0;
   private connection: PlaybackConnection = 'connecting';
@@ -202,8 +216,10 @@ export class PlaybackSession {
   };
 
   play = (track: Track, trackList?: Track[]) => {
+    if (!this.running) return;
     if (this.engineTrackId === track.id && this.hasLease() && this.snapshot) {
-      const playing = this.transportPlaying(this.snapshot) ?? this.isPlaying(this.snapshot);
+      const playing = this.trackPreview ? this.engineShouldPlay
+        : this.transportPlaying(this.snapshot) ?? this.isPlaying(this.snapshot);
       const retry = this.needsGesture || this.engineStatus === 'error' ||
         (playing && this.engineStatus === 'paused' && !this.transport && !this.endedSession);
       this.setPlaying(track.id, retry || !playing, retry);
@@ -214,11 +230,17 @@ export class PlaybackSession {
     if (this.pendingPlay?.trackId === track.id) return;
     const pending = !this.snapshot || this.snapshot.session.trackId !== track.id || !this.isPlaying(this.snapshot)
       ? { trackId: track.id } : null;
+    const timing = pending ? this.beginPlaybackTiming(track.id, 'play-to-playing') : null;
     if (pending) {
       this.pendingPlay = pending;
       this.publish();
     }
 
+    const preview = this.snapshot?.session.trackId !== track.id ? this.previewTrack(track) : null;
+    const session = this.snapshot?.session;
+    if (pending && !this.engine && !session?.pendingDeviceId &&
+        (!session?.activeDeviceId || session.activeDeviceId === this.deviceId ||
+          (session.leaseUntil ?? 0) <= this.serverNow)) this.prepareAudio(track);
     this.send((snapshot) => {
       if (snapshot.session.trackId === track.id) {
         return this.isPlaying(snapshot) ? { type: 'pause' } : { type: 'play' };
@@ -227,12 +249,83 @@ export class PlaybackSession {
       if (!ids.includes(track.id)) ids.push(track.id);
       const start = Math.max(0, Math.min(ids.indexOf(track.id), ids.length - queueLimit));
       return { type: 'play', trackId: track.id, queue: ids.slice(start, start + queueLimit) };
-    }, () => {
-      if (this.pendingPlay === pending) this.pendingPlay = null;
+    }, (failed) => {
+      if (this.pendingPlay === pending) {
+        this.pendingPlay = null;
+        if (pending && this.prepared?.track.id === track.id) this.clearPreparedAudio();
+      }
+      if (failed || !this.hasLease() || this.engineTrackId !== track.id) this.cancelPlaybackTiming(timing);
+      this.finishPreview(preview);
     });
   };
 
-  playNext = () => this.send(() => ({ type: 'next' }));
+  playNext = () => {
+    const nextId = this.snapshot?.session.nextTrackId;
+    const track = nextId == null ? undefined : this.tracks.get(nextId);
+    const preview = track ? this.previewTrack(track) : null;
+    this.send(() => ({ type: 'next' }), () => this.finishPreview(preview));
+  };
+
+  private previewTrack(track: Track): TrackPreview | null {
+    const session = this.snapshot?.session;
+    if (!session || session.anchorPosition === undefined || session.trackId === track.id ||
+      !this.engine || this.engineTrackId !== session.trackId || !this.hasLease() ||
+      this.queuedCommands || this.pendingSeek || this.trackPreview || this.needsGesture) return null;
+    const preview = { track, version: session.version, previousPosition: this.engine.currentTime };
+    this.trackPreview = preview;
+    this.engineTrackId = track.id;
+    this.engineShouldPlay = true;
+    this.engine.load(track, { prepared: this.takePreparedAudio(track) });
+    this.publish();
+    return preview;
+  }
+
+  private finishPreview(preview: TrackPreview | null) {
+    if (!preview || this.trackPreview !== preview) return;
+    this.trackPreview = null;
+    this.startPosition = preview.previousPosition;
+    this.applyAudio();
+  }
+
+  private prepareAudio(track: Track) {
+    if (this.prepared?.track.id === track.id && this.prepared.track.streamUrl === track.streamUrl) return;
+    this.clearPreparedAudio();
+    this.prepared = { track, audio: preloadAudio(track.streamUrl) };
+  }
+
+  private clearPreparedAudio() {
+    if (!this.prepared) return;
+    unloadAudio(this.prepared.audio);
+    this.prepared = null;
+  }
+
+  private takePreparedAudio(track: Track) {
+    const prepared = this.prepared;
+    if (prepared?.track.id !== track.id) return;
+    if (prepared.track.streamUrl !== track.streamUrl || prepared.audio.error) {
+      this.clearPreparedAudio();
+      return;
+    }
+    this.prepared = null;
+    return prepared.audio;
+  }
+
+  private prepareUpcomingTrack() {
+    const nextId = this.snapshot?.session.endedTrackId;
+    if (!this.engine || this.trackPreview || this.pendingPlay) return;
+    if (this.prepared && this.prepared.track.id !== nextId) this.clearPreparedAudio();
+    if (nextId == null || nextId === this.engineTrackId || !this.engine.canPreloadNext) return;
+    const next = this.tracks.get(nextId);
+    if (next) this.prepareAudio(next);
+  }
+
+  private beginPlaybackTiming(trackId: number, name: string) {
+    return this.playbackTiming = { trackId, name, startedAt: performance.now() };
+  }
+
+  private cancelPlaybackTiming(timing: PlaybackSession['playbackTiming']) {
+    if (this.playbackTiming === timing) this.playbackTiming = null;
+  }
   playPrev = () => this.send(() => ({ type: 'previous' }));
   toggleShuffle = () => this.send(({ session }) => ({ type: 'setShuffle', shuffle: !session.shuffle }));
   cycleRepeat = () => this.send(({ session }) => ({ type: 'setRepeat', repeat: nextRepeat[session.repeat] }));
@@ -258,7 +351,7 @@ export class PlaybackSession {
 
   private queueSeek(position: number) {
     const session = this.snapshot?.session;
-    const trackId = session?.trackId;
+    const trackId = this.trackPreview?.track.id ?? session?.trackId;
     if (trackId == null || !this.view.duration || !Number.isFinite(position)) return;
     const seek: SeekIntent = {
       trackId, id: newPlaybackId(), position: Math.max(0, Math.min(this.view.duration, position)),
@@ -306,23 +399,32 @@ export class PlaybackSession {
 
   private setPlaying(trackId: number, playing: boolean, retry = false) {
     const base = this.snapshot?.session;
-    const local = base && this.hasLease() && this.engineTrackId === trackId;
+    const preview = this.trackPreview?.track.id === trackId ? this.trackPreview : null;
+    const local = base && (base.trackId === trackId || preview) && this.hasLease() && this.engineTrackId === trackId;
     const position = local && this.engineDuration ? this.engine?.currentTime : undefined;
     const intent = local ? { version: base.version, playing } : null;
     if (intent) {
-      this.transport = intent;
       if (playing) {
         this.needsGesture = false;
         this.endedSession = null;
       }
-      this.applyAudio(false, retry);
+      if (preview) {
+        preview.transport = intent;
+        this.engineShouldPlay = playing;
+        if (playing) this.engine?.resume();
+        else this.engine?.pause();
+      } else {
+        this.transport = intent;
+        this.applyAudio(false, retry);
+      }
       this.publish();
     }
     this.send((snapshot) => {
       if (snapshot.session.trackId !== trackId || (local && !this.hasLease())) return null;
       if (playing === this.isPlaying(snapshot)) return null;
       if (playing) return { type: 'play' };
-      return { type: 'pause', position: base && sameTimeline(base, snapshot.session) ? position : undefined };
+      const sameTrack = base && sameTimeline(base, snapshot.session);
+      return { type: 'pause', position: sameTrack || (intent && this.transport === intent) ? position : undefined };
     }, (failed) => {
       if (intent && this.transport === intent) {
         this.transport = null;
@@ -370,6 +472,8 @@ export class PlaybackSession {
     } else if (!this.engine && this.snapshot) {
       if (this.view.activeDeviceId && (this.snapshot.session.leaseUntil ?? 0) <= this.serverNow) this.publish();
       else this.publishProgress();
+    } else if (this.engine) {
+      this.prepareUpcomingTrack();
     }
   };
 
@@ -401,6 +505,9 @@ export class PlaybackSession {
     this.seekInFlight = null;
     this.transport = null;
     this.pendingPlay = null;
+    this.clearPreparedAudio();
+    this.playbackTiming = null;
+    this.startPosition = undefined;
     clearTimeout(this.heartbeatTimer);
     clearTimeout(this.leaseTimer);
     clearTimeout(this.claimTimer);
@@ -571,6 +678,7 @@ export class PlaybackSession {
 
   private enqueue(createCommand: CreateCommand, onSettled?: (failed: boolean) => void, retryConflict = false) {
     const generation = this.generation;
+    this.queuedCommands++;
     this.commands = this.commands.catch(() => {}).then(async () => {
       if (!this.running || generation !== this.generation) return;
       if (!this.registered || !this.snapshot) await this.refresh();
@@ -585,7 +693,9 @@ export class PlaybackSession {
       const execute = async (snapshot: PlaybackSnapshot) => {
         const command = createCommand(snapshot);
         if (!command) return;
+        const startedAt = performance.now();
         const error = await this.request((signal) => this.api.command(snapshot.session.version, command, signal), true);
+        recordPlaybackTiming(`command-${command.type}`, startedAt);
         if (command.type === 'seek' && command.seekId && this.snapshot?.session.timelineRevision === command.seekId) return;
         return error;
       };
@@ -600,7 +710,7 @@ export class PlaybackSession {
       this.notice = error ? 'Не удалось применить действие. Попробуйте ещё раз.' : null;
       onSettled?.(Boolean(error));
       this.publish();
-    });
+    }).finally(() => { this.queuedCommands--; });
   }
 
   private acceptSnapshot(snapshot: PlaybackSnapshot, startedAt?: number) {
@@ -625,17 +735,33 @@ export class PlaybackSession {
     this.connection = 'online';
     if (this.transport && this.transport.version !== session.version) this.transport = null;
     const moved = previous !== null && !sameTimeline(previous.session, session);
+    const preview = this.trackPreview;
+    const confirmedPreview = Boolean(preview && session.version === preview.version + 1 &&
+      session.trackId === preview.track.id && session.anchorPosition === 0 && own && !session.pendingDeviceId);
+    if (moved) this.startPosition = session.anchorPosition;
+    if (preview && (session.version !== preview.version || !stillActive)) {
+      this.trackPreview = null;
+      if (!moved && stillActive) this.startPosition = preview.previousPosition;
+      if (confirmedPreview) {
+        this.startPosition = undefined;
+        if (preview.transport) {
+          preview.transport.version = session.version;
+          this.transport = preview.transport;
+        }
+      }
+    }
     const ownSeek = moved && this.seekInFlight !== null && session.timelineRevision === this.seekInFlight;
     const unconfirmedSeek = this.pendingSeek?.local && session.timelineRevision !== this.pendingSeek.id;
     if (moved && this.endedSession) {
       this.endedSession = ownSeek && sameTimeline(this.endedSession, previous.session) ? session : null;
     }
-    if ((moved && !ownSeek) || session.pendingDeviceId || (wasLeased && !stillActive)) {
+    if (confirmedPreview && preview?.ended) this.endedSession = session;
+    if ((moved && !ownSeek && !confirmedPreview) || session.pendingDeviceId || (wasLeased && !stillActive)) {
       this.cancelSeeks();
     }
 
     if (handoff) {
-      const position = this.stopAudio(session.trackId);
+      const position = this.stopAudio(session.trackId) ?? (!moved ? preview?.previousPosition : undefined);
       if ((moved && !ownSeek) || unconfirmedSeek) this.ackPosition = undefined;
       else this.ackPosition = position ?? this.ackPosition;
       this.leaseDeadline = 0;
@@ -661,13 +787,14 @@ export class PlaybackSession {
 
     clearTimeout(this.claimTimer);
     if (session.pendingDeviceId === this.deviceId) {
+      if (previous?.session.pendingDeviceId !== this.deviceId) this.confirmHandoff();
       const wait = Math.max(0, (session.leaseUntil ?? 0) - this.serverNow);
       // Retry promptly after an unresponsive previous device's lease expires.
       this.claimTimer = window.setTimeout(() => this.refreshSoon(), Math.max(250, wait + 100));
     }
 
     this.resolveTracks();
-    this.applyAudio(moved && !ownSeek);
+    this.applyAudio(moved && !ownSeek && !confirmedPreview);
     this.publish();
   }
 
@@ -676,6 +803,13 @@ export class PlaybackSession {
     this.ackInFlight = true;
     void this.request((signal) => this.api.acknowledge(session.version, this.ackPosition, signal), true)
       .finally(() => { this.ackInFlight = false; });
+  }
+
+  private confirmHandoff() {
+    if (!this.registered || this.handoffConfirmationInFlight) return;
+    this.handoffConfirmationInFlight = true;
+    void this.request((signal) => this.api.heartbeat(signal, undefined, true), true)
+      .finally(() => { this.handoffConfirmationInFlight = false; });
   }
 
   private resolveTracks() {
@@ -713,6 +847,7 @@ export class PlaybackSession {
       this.stopAudio();
       return;
     }
+    if (this.trackPreview) return;
     const { trackId } = snapshot.session;
     const track = trackId === null ? undefined : this.tracks.get(trackId);
     if (!track) {
@@ -721,15 +856,21 @@ export class PlaybackSession {
     }
     const ended = this.endedSession !== null && sameTimeline(this.endedSession, snapshot.session);
     const playing = (this.transportPlaying(snapshot) ?? this.isPlaying(snapshot)) && !ended;
-    const engine = this.engine ?? this.createEngine();
+    const prepared = this.engineTrackId !== track.id && playing ? this.takePreparedAudio(track) : undefined;
+    const engine = this.engine ?? this.createEngine(prepared);
     if (this.engineTrackId !== track.id) {
       this.engineTrackId = track.id;
       this.needsGesture = false;
       this.engineShouldPlay = playing;
-      engine.load(track, { position: this.position(), playing });
+      const position = this.startPosition ?? this.position();
+      this.startPosition = undefined;
+      engine.load(track, { position, playing, prepared });
       return;
     }
-    if (movePosition) engine.seekTo(this.position());
+    if (movePosition) {
+      engine.seekTo(this.startPosition ?? this.position());
+      this.startPosition = undefined;
+    }
     if (playing === this.engineShouldPlay && !retry) return;
     this.engineShouldPlay = playing;
     if (!playing && this.engineStatus !== 'paused') {
@@ -737,12 +878,17 @@ export class PlaybackSession {
     } else if (playing && !this.needsGesture && (retry || this.engineStatus !== 'error')) engine.resume();
   }
 
-  private createEngine() {
+  private createEngine(audio?: HTMLAudioElement) {
     const engine = new AudioEngine({
       canPlay: () => this.hasLease(),
       onStatus: (status) => {
         if (this.engine !== engine) return;
         this.engineStatus = status;
+        const timing = this.playbackTiming;
+        if (timing?.trackId === this.engineTrackId && (status === 'playing' || status === 'error')) {
+          if (status === 'playing') recordPlaybackTiming(timing.name, timing.startedAt);
+          this.playbackTiming = null;
+        }
         this.publish();
       },
       onDuration: (duration) => {
@@ -754,13 +900,25 @@ export class PlaybackSession {
       onEnded: () => {
         if (this.engine !== engine || !this.hasLease() || !this.snapshot || this.engineTrackId === null) return;
         const trackId = this.engineTrackId;
+        const preview = this.trackPreview;
+        if (preview) preview.ended = true;
         const ended = this.snapshot.session;
         const seekId = this.pendingSeek?.id;
-        this.endedSession = ended;
+        if (!preview) this.endedSession = ended;
         this.engineShouldPlay = false;
+        const nextId = ended.endedTrackId;
+        const timing = nextId == null ? null : this.beginPlaybackTiming(nextId, 'ended-to-playing');
+        const prepared = this.prepared;
+        const nextPreview = !preview && prepared && prepared.track.id === nextId &&
+          !prepared.audio.error && prepared.audio.readyState >= 3
+          ? this.previewTrack(prepared.track) : null;
         this.send(({ session }) => this.hasLease() &&
-          (sameTimeline(ended, session) || (seekId !== undefined && session.timelineRevision === seekId))
-          ? { type: 'ended', trackId } : null, undefined, true);
+          (preview ? this.endedSession !== null && sameTimeline(this.endedSession, session) && session.trackId === trackId
+            : sameTimeline(ended, session) || (seekId !== undefined && session.timelineRevision === seekId))
+          ? { type: 'ended', trackId } : null, (failed) => {
+          if (failed || this.snapshot?.session.trackId !== nextId) this.cancelPlaybackTiming(timing);
+          this.finishPreview(nextPreview);
+        }, true);
       },
       onPlaybackBlocked: () => {
         if (this.engine !== engine) return;
@@ -778,7 +936,7 @@ export class PlaybackSession {
       onMediaSeek: (position) => this.queueSeek(position),
       onNext: this.playNext,
       onPrevious: this.playPrev,
-    }, this.volume);
+    }, this.volume, audio);
     this.engine = engine;
     return engine;
   }
@@ -788,6 +946,9 @@ export class PlaybackSession {
     const engine = this.engine;
     const position = trackId === undefined || this.engineTrackId === trackId ? engine.currentTime : undefined;
     this.engine = null;
+    this.clearPreparedAudio();
+    this.playbackTiming = null;
+    this.trackPreview = null;
     this.engineTrackId = null;
     this.engineStatus = 'idle';
     this.engineShouldPlay = false;
@@ -803,7 +964,7 @@ export class PlaybackSession {
   private publish() {
     const snapshot = this.snapshot;
     const session = snapshot?.session;
-    const trackId = session?.trackId;
+    const trackId = this.trackPreview?.track.id ?? session?.trackId;
     const currentTrack = trackId == null ? null : this.tracks.get(trackId) ?? null;
     const resolvedQueue = (session?.queue ?? []).flatMap((id) => {
       const track = this.tracks.get(id);
@@ -813,7 +974,8 @@ export class PlaybackSession {
     const queue = previousQueue.length === resolvedQueue.length && previousQueue.every((track, index) => track === resolvedQueue[index])
       ? previousQueue : resolvedQueue;
     const local = this.hasLease();
-    const duration = (local ? this.engineDuration : 0) || session?.duration || currentTrack?.duration || 0;
+    const duration = (local ? this.engineDuration : 0) ||
+      (this.trackPreview ? currentTrack?.duration : session?.duration ?? currentTrack?.duration) || 0;
     const remotePlaying = snapshot && this.isPlaying(snapshot);
     const devices = snapshot?.devices ?? initialPlaybackView.devices;
     const status = currentTrack ? local && this.engine ? this.engineStatus : remotePlaying ? 'playing' : 'paused' : 'idle';

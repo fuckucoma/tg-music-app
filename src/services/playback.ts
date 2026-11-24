@@ -33,8 +33,11 @@ export interface PlaybackSnapshot {
     trackId: number | null;
     queue: number[];
     queueIndex: number;
+    nextTrackId?: number | null;
+    endedTrackId?: number | null;
     playing: boolean;
     position: number;
+    anchorPosition?: number;
     positionAt?: number;
     duration: number | null;
     shuffle: boolean;
@@ -84,7 +87,8 @@ export function playbackApi(token: string, credentials: DeviceCredentials) {
 
   return {
     register: (name: string, platform: DevicePlatform, signal: AbortSignal) => post('/devices', { name, platform }, signal),
-    heartbeat: (signal: AbortSignal, report?: PlaybackReport) => post('/heartbeat', { report }, signal),
+    heartbeat: (signal: AbortSignal, report?: PlaybackReport, waitForHandoff?: boolean) =>
+      post('/heartbeat', { report, waitForHandoff }, signal),
     command: (expectedVersion: number, command: PlaybackCommand, signal?: AbortSignal, keepalive?: boolean) =>
       post('/command', { expectedVersion, command }, signal, keepalive),
     acknowledge: (expectedVersion: number, position: number | undefined, signal: AbortSignal) =>

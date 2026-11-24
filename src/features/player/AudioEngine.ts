@@ -18,8 +18,49 @@ const mediaActions: MediaSessionAction[] = [
   'play', 'pause', 'stop', 'previoustrack', 'nexttrack', 'seekto', 'seekforward', 'seekbackward',
 ];
 
+export function recordPlaybackTiming(name: string, start: number) {
+  const entry = `playback:${name}`;
+  try {
+    performance.clearMeasures(entry);
+    performance.measure(entry, { start });
+  } catch {
+    // Some WebViews only support the original User Timing API.
+  }
+}
+
+const audioLoadTimes = new WeakMap<HTMLAudioElement, number>();
+
+function onAudioReady(event: Event) {
+  const audio = event.currentTarget as HTMLAudioElement;
+  const startedAt = audioLoadTimes.get(audio);
+  if (startedAt !== undefined) recordPlaybackTiming('audio-ready', startedAt);
+  audioLoadTimes.delete(audio);
+}
+
+function loadSource(audio: HTMLAudioElement, url?: string) {
+  audioLoadTimes.set(audio, performance.now());
+  audio.addEventListener('canplay', onAudioReady, { once: true });
+  if (url !== undefined) audio.src = url;
+  audio.load();
+}
+
+export function preloadAudio(url: string) {
+  const audio = new Audio();
+  audio.preload = 'auto';
+  loadSource(audio, url);
+  return audio;
+}
+
+export function unloadAudio(audio: HTMLAudioElement) {
+  audio.removeEventListener('canplay', onAudioReady);
+  audioLoadTimes.delete(audio);
+  audio.pause();
+  audio.removeAttribute('src');
+  audio.load();
+}
+
 export class AudioEngine {
-  private readonly audio = new Audio();
+  private audio: HTMLAudioElement;
   private readonly mediaSession = navigator.mediaSession;
   private readonly listeners: Partial<Record<keyof HTMLMediaElementEventMap, EventListener>>;
   private hasTrack = false;
@@ -27,9 +68,10 @@ export class AudioEngine {
   private requestId = 0;
   private pendingPosition: number | null = null;
 
-  constructor(private readonly callbacks: AudioCallbacks, volume: number) {
-    this.audio.preload = 'metadata';
-    this.audio.volume = volume;
+  constructor(private readonly callbacks: AudioCallbacks, volume: number, audio = new Audio()) {
+    this.audio = audio;
+    if (!audio.src) audio.preload = 'metadata';
+    audio.volume = volume;
     this.listeners = {
       playing: () => {
         if (this.wantsPlayback && !this.audio.paused) {
@@ -70,9 +112,15 @@ export class AudioEngine {
         this.setStatus('error');
       },
     };
-    for (const [event, listener] of Object.entries(this.listeners)) {
-      this.audio.addEventListener(event, listener);
-    }
+    this.listen(audio);
+  }
+
+  private listen(audio: HTMLAudioElement) {
+    for (const [event, listener] of Object.entries(this.listeners)) audio.addEventListener(event, listener);
+  }
+
+  private unlisten(audio: HTMLAudioElement) {
+    for (const [event, listener] of Object.entries(this.listeners)) audio.removeEventListener(event, listener);
   }
 
   private get duration() {
@@ -84,18 +132,53 @@ export class AudioEngine {
     return this.audio.currentTime;
   }
 
-  load(track: Track, { position = 0, playing = true } = {}) {
+  get canPreloadNext() {
+    const remaining = this.duration - this.currentTime;
+    if (!this.wantsPlayback || this.audio.paused || remaining <= 0 || remaining > 20) return false;
+    const { buffered } = this.audio;
+    const needed = this.currentTime + Math.min(8, remaining);
+    for (let i = 0; i < buffered.length; i++) {
+      if (buffered.start(i) <= this.currentTime && buffered.end(i) >= needed - 0.05) return true;
+    }
+    return false;
+  }
+
+  load(track: Track, { position = 0, playing = true, prepared }: {
+    position?: number; playing?: boolean; prepared?: HTMLAudioElement;
+  } = {}) {
     this.requestId++;
     this.wantsPlayback = false;
+    const previous = this.hasTrack && prepared ? this.audio : null;
     this.hasTrack = true;
     this.pendingPosition = position > 0 ? position : null;
     this.callbacks.onProgress(0);
     this.callbacks.onDuration(0);
     this.setMediaTrack(track);
-    this.audio.src = track.streamUrl;
-    this.audio.load();
-    if (playing) this.resume();
+    if (prepared) {
+      if (prepared !== this.audio) this.replaceAudio(prepared);
+      // The preload may have raised durationchange before the player attached.
+      this.callbacks.onDuration(this.duration);
+      if (this.pendingPosition !== null && this.duration) this.seekTo(this.pendingPosition);
+      this.updateProgress();
+    } else {
+      this.audio.preload = 'metadata';
+      loadSource(this.audio, track.streamUrl);
+    }
+    if (playing) this.play(previous ? () => {
+      const resumeAt = this.pendingPosition ?? this.currentTime;
+      this.replaceAudio(previous);
+      this.load(track, { position: resumeAt });
+    } : undefined);
     else this.setStatus('paused');
+  }
+
+  private replaceAudio(audio: HTMLAudioElement) {
+    const old = this.audio;
+    audio.volume = old.volume;
+    this.unlisten(old);
+    unloadAudio(old);
+    this.audio = audio;
+    this.listen(audio);
   }
 
   togglePlayback() {
@@ -120,12 +203,8 @@ export class AudioEngine {
     this.hasTrack = false;
     this.wantsPlayback = false;
     this.requestId++;
-    for (const [event, listener] of Object.entries(this.listeners)) {
-      this.audio.removeEventListener(event, listener);
-    }
-    this.audio.pause();
-    this.audio.removeAttribute('src');
-    this.audio.load();
+    this.unlisten(this.audio);
+    unloadAudio(this.audio);
     if (this.mediaSession) {
       this.mediaSession.metadata = null;
       this.mediaSession.playbackState = 'none';
@@ -135,10 +214,14 @@ export class AudioEngine {
   }
 
   resume() {
+    this.play();
+  }
+
+  private play(onPreloadBlocked?: () => void) {
     if (!this.hasTrack || this.wantsPlayback || this.callbacks.canPlay?.() === false) return;
     if (this.audio.error) {
       if (this.pendingPosition === null && this.currentTime > 0) this.pendingPosition = this.currentTime;
-      this.audio.load();
+      loadSource(this.audio);
     }
     this.wantsPlayback = true;
     const requestId = ++this.requestId;
@@ -146,10 +229,13 @@ export class AudioEngine {
     void this.audio.play().catch((error: unknown) => {
       if (requestId !== this.requestId) return;
       this.wantsPlayback = false;
-      this.setStatus('error');
-      if (typeof error === 'object' && error !== null && 'name' in error && error.name === 'NotAllowedError') {
-        this.callbacks.onPlaybackBlocked?.();
+      const blocked = typeof error === 'object' && error !== null && 'name' in error && error.name === 'NotAllowedError';
+      if (blocked && onPreloadBlocked && this.callbacks.canPlay?.() !== false) {
+        onPreloadBlocked();
+        return;
       }
+      this.setStatus('error');
+      if (blocked) this.callbacks.onPlaybackBlocked?.();
     });
   }
 
